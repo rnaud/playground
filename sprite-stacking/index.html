@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprite Stacking Playground</title>
+<style>
+  :root { --bg:#14151c; --panel:#1d1f2a; --line:#2e3142; --ink:#e8e6df; --dim:#9a9cab; --acc:#ffcf5c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 ui-monospace, Menlo, Consolas, monospace; }
+  main { max-width:1180px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:20px; margin:0 0 4px; color:var(--acc); letter-spacing:.5px; }
+  p { margin:0 0 14px; color:var(--dim); max-width:75ch; }
+  .grid { display:grid; grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); gap:16px; }
+  @media (max-width:860px) { .grid { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
+  .card h2 { font-size:13px; margin:0 0 8px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); }
+  canvas { image-rendering:pixelated; display:block; width:100%; border-radius:4px; background:#0d0e13; }
+  #scene { cursor:grab; touch-action:none; }
+  label { display:grid; grid-template-columns:110px 1fr 44px; gap:8px; align-items:center; margin:6px 0; }
+  label span:last-child { text-align:right; color:var(--acc); }
+  input[type=range] { width:100%; accent-color:var(--acc); }
+  .row { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+  button { background:#2a2d3d; color:var(--ink); border:1px solid var(--line); border-radius:4px; padding:4px 10px; font:inherit; cursor:pointer; }
+  button.on { background:var(--acc); color:#1a1300; border-color:var(--acc); }
+  #slices { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  #slices figure { margin:0; text-align:center; font-size:10px; color:var(--dim); }
+  #slices canvas { width:auto; background:#0d0e13; border:1px solid var(--line); }
+  kbd { background:#2a2d3d; border:1px solid var(--line); border-radius:3px; padding:0 5px; color:var(--ink); }
+  .hint { font-size:12px; color:var(--dim); margin:8px 0 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sprite Stacking Playground</h1>
+  <p>Every object below is a pile of flat pixel-art slices (horizontal cross-sections). Each frame, every
+     slice is rotated in 2D and drawn one pixel-row higher than the last. No 3D engine, no meshes, no voxels
+     at render time &mdash; just <code>drawImage</code> in a loop.</p>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Scene</h2>
+      <canvas id="scene" width="420" height="280"></canvas>
+      <p class="hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows drive &middot;
+        <kbd>Q</kbd><kbd>E</kbd> or drag to orbit the camera &middot; the car self-drives until you take over.
+        <span id="stats"></span></p>
+    </section>
+
+    <section class="card">
+      <h2>Anatomy</h2>
+      <div class="row" id="picker"></div>
+      <canvas id="anatomy" width="220" height="190"></canvas>
+      <label><span>Explode</span><input id="explode" type="range" min="1" max="8" step="0.1" value="1"><span id="explodeV"></span></label>
+      <label><span>Camera pitch</span><input id="pitch" type="range" min="0" max="90" step="1" value="50"><span id="pitchV"></span></label>
+      <label><span>Layer height</span><input id="spacing" type="range" min="0.5" max="2.5" step="0.1" value="1"><span id="spacingV"></span></label>
+      <div class="row">
+        <button id="fill" class="on">Fill gaps</button>
+        <button id="shade" class="on">Height shading</button>
+        <button id="orbit">Auto-orbit</button>
+      </div>
+      <div id="slices"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+'use strict';
+// ---------- helpers ----------
+const mkCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const noise3 = (x, y, z) => { let h = Math.imul(x * 374761393 + y * 668265263 + z * 2147483647 | 0, 1274126177); h ^= h >>> 13; return ((Math.imul(h, 1274126177) >>> 0) % 1000) / 1000; };
+
+// ---------- models: a function (x,y,z) -> colour, baked into one canvas per z ----------
+// Two bakes per model: flat colours, and "shaded" (lower slices darker) which sells the depth.
+function makeModel(name, W, L, H, fn) {
+  const bake = shaded => {
+    const out = [];
+    for (let z = 0; z < H; z++) {
+      const c = mkCanvas(W, L), g = c.getContext('2d'), img = g.createImageData(W, L);
+      const k = shaded ? 0.62 + 0.38 * (z / Math.max(1, H - 1)) : 1;
+      for (let y = 0; y < L; y++) for (let x = 0; x < W; x++) {
+        const col = fn(x, y, z);
+        if (col == null) continue;
+        const i = (y * W + x) * 4;
+        img.data[i] = (col >> 16 & 255) * k; img.data[i + 1] = (col >> 8 & 255) * k; img.data[i + 2] = (col & 255) * k; img.data[i + 3] = 255;
+      }
+      g.putImageData(img, 0, 0);
+      out.push(c);
+    }
+    return out;
+  };
+  const flat = bake(false), shaded = bake(true);
+  const shadow = mkCanvas(W, L), sg = shadow.getContext('2d');
+  flat.forEach(s => sg.drawImage(s, 0, 0));
+  sg.globalCompositeOperation = 'source-in'; sg.fillStyle = '#000'; sg.fillRect(0, 0, W, L);
+  return { name, W, L, H, flat, shaded, shadow };
+}
+
+const carFn = (body, light) => (x, y, z) => {
+  const wheel = (x < 2 || x > 11) && ((y >= 3 && y <= 7) || (y >= 16 && y <= 20));
+  if (z <= 2 && wheel) return 0x1b1b22;
+  if (z >= 1 && z <= 4 && x >= 1 && x <= 12) {
+    if (z === 1) return 0x2a2a33;
+    if (y === 23 && z === 3 && (x <= 3 || x >= 10)) return 0xffe27a;   // headlights
+    if (y === 0 && z === 3 && (x <= 3 || x >= 10)) return 0xff3040;    // tail lights
+    if (z === 4 && (x === 6 || x === 7)) return 0xf4f1e6;              // racing stripe
+    return body;
+  }
+  if (z >= 5 && z <= 7 && x >= 2 && x <= 11 && y >= 6 && y <= 16) {
+    if (z === 7) return (x === 6 || x === 7) ? 0xf4f1e6 : light;
+    const edge = x === 2 || x === 11 || y === 6 || y === 16;
+    if (!edge) return null;
+    const pillar = ((x === 2 || x === 11) && (y === 6 || y === 16 || y === 11));
+    return pillar ? body : 0x9fd8ff;
+  }
+  return null;
+};
+
+const MODELS = {};
+const add = (...a) => MODELS[a[0]] = makeModel(...a);
+add('car', 14, 24, 8, carFn(0xd8363e, 0xf0555c));
+add('taxi', 14, 24, 8, carFn(0xf0b429, 0xffd257));
+add('van', 14, 24, 8, carFn(0x3d7dd8, 0x69a2f0));
+add('tree', 18, 18, 22, (x, y, z) => {
+  const dx = x - 8.5, dy = y - 8.5;
+  if (z < 9 && Math.hypot(dx, dy) < 1.7) return noise3(x, y, z) > .5 ? 0x7a4a2a : 0x8d5a34;
+  const d = Math.hypot(dx, dy, (z - 14) * 1.05), n = noise3(x, y, z);
+  if (z >= 6 && d < 6.6 + n * 1.8) return n > .7 ? 0x7fd45a : n > .3 ? 0x4fae45 : 0x2f8a3c;
+  return null;
+});
+add('pine', 16, 16, 26, (x, y, z) => {
+  const d = Math.hypot(x - 7.5, y - 7.5);
+  if (z < 5) return d < 1.6 ? 0x6b4226 : null;
+  const k = z - 5, tier = k % 7, r = (7.8 - k * 0.3) * (1 - tier / 10);
+  if (d < r) return noise3(x, y, z) > .55 ? 0x2e7d5b : 0x1f5f4a;
+  return null;
+});
+add('house', 26, 22, 18, (x, y, z) => {
+  if (z <= 9) {
+    if (x < 1 || x > 24 || y < 1 || y > 20) return null;
+    if (!(x === 1 || x === 24 || y === 1 || y === 20)) return z === 0 ? 0x6b5a48 : null;
+    if (y === 20 && x >= 11 && x <= 14 && z < 6) return 0x7a4a2a;                            // door
+    if (z >= 4 && z <= 6 && (y === 20 || y === 1) && ((x >= 4 && x <= 7) || (x >= 18 && x <= 21))) return 0x8fd0ff;
+    if (z >= 4 && z <= 6 && (x === 1 || x === 24) && y >= 8 && y <= 13) return 0x8fd0ff;
+    return z < 2 ? 0xb9a88c : 0xf0e3c4;
+  }
+  if (x >= 18 && x <= 20 && y >= 5 && y <= 7 && z <= 17) return 0x8a8a94;                    // chimney
+  const inset = Math.floor((z - 10) * 1.7);
+  if (x >= inset && x <= 25 - inset) return (y % 3 === 0) ? 0xa8402f : 0xc9543c;             // gable roof
+  return null;
+});
+add('crate', 10, 10, 9, (x, y, z) => {
+  const e = (x === 0 || x === 9) + (y === 0 || y === 9) + (z === 0 || z === 8);
+  if (e >= 2) return 0x6e4a22;
+  if (e === 1) return (z === 8 && (x === y || x === 9 - y)) ? 0x6e4a22 : 0xc1904b;
+  return null;
+});
+add('rock', 16, 14, 8, (x, y, z) => {
+  const n = noise3(x, y, z), d = Math.hypot((x - 7.5) / 7.5, (y - 6.5) / 6.5, z / 7.5);
+  return d < 0.82 + n * 0.2 ? (n > .6 ? 0xa3a6b3 : 0x80838f) : null;
+});
+add('tower', 14, 14, 30, (x, y, z) => {
+  const d = Math.hypot(x - 6.5, y - 6.5);
+  if (z >= 26) return d < (30 - z) * 1.5 ? 0xd8363e : null;                                   // cap
+  if (z >= 22) return d < 6.8 && d > 4.6 ? ((x + y) % 4 < 2 ? 0xffe27a : 0x33363f) : (d <= 4.6 && z === 22 ? 0x55585f : null); // lantern
+  const r = 6.2 - z * 0.09;
+  if (d < r && d > r - 1.6) return Math.floor(z / 5) % 2 ? 0xd8363e : 0xf4f1e6;               // striped shell
+  return null;
+});
+
+// ---------- the whole technique ----------
+// Slice i is drawn at screen offset -i*lift. `pitch` is the camera elevation (0 = side-on, 90deg = top-down):
+// the ground plane squashes by sin(pitch) and vertical height shows by cos(pitch).
+function drawStack(ctx, m, x, y, rot, o) {
+  const squash = Math.sin(o.pitch), lift = Math.cos(o.pitch) * o.spacing * o.scale;
+  const slices = o.shade ? m.shaded : m.flat;
+  const sub = o.fill ? Math.max(1, Math.ceil(lift)) : 1;   // repeat each slice to plug gaps between layers
+  let draws = 0;
+  for (let i = 0; i < m.H; i++) for (let s = 0; s < sub; s++) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.translate(Math.round(x), Math.round(y - (i + s / sub) * lift));
+    ctx.scale(o.scale, o.scale * squash);
+    ctx.rotate(rot);
+    ctx.drawImage(slices[i], -m.W / 2, -m.L / 2);
+    draws++;
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  return draws;
+}
+
+// ---------- world ----------
+const WORLD = 760, RX = 250, RY = 180, MID = WORLD / 2;
+const roadDist = (x, y) => Math.hypot((x - MID) / RX, (y - MID) / RY);
+const ground = mkCanvas(WORLD, WORLD);
+(() => {
+  const g = ground.getContext('2d'), r = mulberry32(3);
+  g.fillStyle = '#4c9a4a'; g.fillRect(0, 0, WORLD, WORLD);
+  for (let i = 0; i < 9000; i++) { g.fillStyle = ['#458f45', '#57a852', '#3f8642', '#62b35a'][i & 3]; g.fillRect(r() * WORLD | 0, r() * WORLD | 0, 2, 1); }
+  g.lineWidth = 44; g.strokeStyle = '#c9b48a'; g.beginPath(); g.ellipse(MID, MID, RX, RY, 0, 0, 7); g.stroke();
+  g.lineWidth = 36; g.strokeStyle = '#555864'; g.stroke();
+  g.lineWidth = 2; g.setLineDash([10, 10]); g.strokeStyle = '#e9e2c8'; g.stroke();
+  g.setLineDash([]); g.fillStyle = '#3d7dd8'; g.beginPath(); g.ellipse(MID, MID, 70, 44, 0, 0, 7); g.fill();
+  g.lineWidth = 3; g.strokeStyle = '#d9c88f'; g.stroke();
+})();
+
+const objects = [];
+(() => {
+  const r = mulberry32(11), kinds = ['tree', 'tree', 'pine', 'pine', 'rock', 'crate', 'house'];
+  let tries = 0;
+  while (objects.length < 90 && tries++ < 4000) {
+    const x = 30 + r() * (WORLD - 60), y = 30 + r() * (WORLD - 60), d = roadDist(x, y);
+    if (Math.abs(d - 1) < 0.2 || Math.hypot((x - MID) / 86, (y - MID) / 60) < 1) continue;
+    const kind = kinds[r() * kinds.length | 0], m = MODELS[kind], rad = Math.max(m.W, m.L) * 0.55;
+    if (objects.some(o => Math.hypot(o.x - x, o.y - y) < o.rad + rad)) continue;
+    objects.push({ m, x, y, rad, rot: kind === 'house' ? (r() * 4 | 0) * Math.PI / 2 + (r() - .5) * .3 : r() * 6.28 });
+  }
+  objects.push({ m: MODELS.tower, x: MID, y: MID - 4, rad: 8, rot: 0 });
+  [[0.6, 'taxi'], [2.4, 'van'], [4.1, 'taxi']].forEach(([t, k]) =>
+    objects.push({ m: MODELS[k], auto: t, speed: 0.0035 + t * 0.0006, lane: 1.035, x: 0, y: 0, rad: 12, rot: 0 }));
+})();
+const player = { m: MODELS.car, x: MID + RX, y: MID, heading: Math.PI / 2, speed: 0, auto: 0, manual: false, rad: 12, rot: 0 };
+objects.push(player);
+
+// ---------- input ----------
+const keys = {};
+addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (/^(arrow|[wasd]$)/.test(e.key.toLowerCase())) { player.manual = true; e.preventDefault(); } });
+addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+const $ = id => document.getElementById(id);
+const scene = $('scene'), sctx = scene.getContext('2d'), anat = $('anatomy'), actx = anat.getContext('2d');
+sctx.imageSmoothingEnabled = actx.imageSmoothingEnabled = false;
+const cam = { x: MID, y: MID, a: 0.6 };
+let drag = null;
+scene.addEventListener('pointerdown', e => { drag = e.clientX; scene.setPointerCapture(e.pointerId); });
+scene.addEventListener('pointermove', e => { if (drag != null) { cam.a += (e.clientX - drag) * 0.01; drag = e.clientX; } });
+scene.addEventListener('pointerup', () => drag = null);
+
+const opt = { pitch: 0, spacing: 1, explode: 1, fill: true, shade: true, orbit: false };
+const bindRange = (id, fmt, set) => { const el = $(id), f = () => { set(+el.value); $(id + 'V').textContent = fmt(+el.value); }; el.addEventListener('input', f); f(); };
+bindRange('pitch', v => v + '°', v => opt.pitch = v * Math.PI / 180);
+bindRange('spacing', v => v.toFixed(1) + 'px', v => opt.spacing = v);
+bindRange('explode', v => '×' + v.toFixed(1), v => opt.explode = v);
+['fill', 'shade', 'orbit'].forEach(k => $(k).addEventListener('click', e => { opt[k] = !opt[k]; e.target.classList.toggle('on', opt[k]); }));
+
+let selected = 'car';
+function select(name) {
+  selected = name;
+  [...$('picker').children].forEach(b => b.classList.toggle('on', b.textContent === name));
+  const box = $('slices'); box.innerHTML = '';
+  const m = MODELS[name];
+  m.flat.forEach((s, i) => {
+    const f = document.createElement('figure'), c = mkCanvas(m.W, m.L);
+    c.getContext('2d').drawImage(s, 0, 0); c.style.height = m.L * 2 + 'px';
+    f.append(c, document.createElement('figcaption')); f.lastChild.textContent = 'z' + i;
+    box.append(f);
+  });
+}
+['car', 'tree', 'pine', 'house', 'tower', 'crate', 'rock'].forEach(n => { const b = document.createElement('button'); b.textContent = n; b.onclick = () => select(n); $('picker').append(b); });
+select('car');
+
+// ---------- loop ----------
+function update(dt) {
+  if (keys.q) cam.a -= 1.8 * dt;
+  if (keys.e) cam.a += 1.8 * dt;
+  if (opt.orbit) cam.a += 0.35 * dt;
+  for (const o of objects) {
+    if (o.auto == null || o.manual) continue;
+    const sp = o === player ? 0.0045 : o.speed, lane = o.lane || 0.965;
+    o.auto += sp * 60 * dt;
+    o.x = MID + Math.cos(o.auto) * RX * lane; o.y = MID + Math.sin(o.auto) * RY * lane;
+    o.heading = Math.atan2(Math.cos(o.auto) * RY, -Math.sin(o.auto) * RX);
+  }
+  if (player.manual) {
+    const up = keys.w || keys.arrowup, dn = keys.s || keys.arrowdown, lf = keys.a || keys.arrowleft, rt = keys.d || keys.arrowright;
+    const onRoad = Math.abs(roadDist(player.x, player.y) - 1) < 0.1;
+    player.speed += ((up ? 260 : 0) - (dn ? 200 : 0)) * dt;
+    player.speed *= Math.pow(onRoad ? 0.35 : 0.08, dt);
+    player.heading += ((rt ? 1 : 0) - (lf ? 1 : 0)) * 2.6 * dt * Math.max(-1, Math.min(1, player.speed / 60));
+    const nx = player.x + Math.cos(player.heading) * player.speed * dt, ny = player.y + Math.sin(player.heading) * player.speed * dt;
+    const hit = objects.some(o => o !== player && Math.hypot(o.x - nx, o.y - ny) < o.rad * 0.8 + 6);
+    if (hit || nx < 10 || ny < 10 || nx > WORLD - 10 || ny > WORLD - 10) player.speed *= -0.3;
+    else { player.x = nx; player.y = ny; }
+  }
+  for (const o of objects) if (o.heading != null) o.rot = o.heading - Math.PI / 2; // car sprites face +y
+  cam.x += (player.x - cam.x) * Math.min(1, 5 * dt); cam.y += (player.y - cam.y) * Math.min(1, 5 * dt);
+}
+
+function render(t) {
+  const W = scene.width, H = scene.height, cx = W / 2, cy = H / 2 + 20;
+  const squash = Math.sin(opt.pitch), c = Math.cos(-cam.a), s = Math.sin(-cam.a);
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.fillStyle = '#2b6a4a'; sctx.fillRect(0, 0, W, H);
+  sctx.translate(cx, cy); sctx.scale(1, squash); sctx.rotate(-cam.a); sctx.translate(-cam.x, -cam.y);
+  sctx.drawImage(ground, 0, 0);
+  // project, cull, then painter-sort back to front
+  const o2 = { pitch: opt.pitch, spacing: opt.spacing, scale: 1, fill: opt.fill, shade: opt.shade };
+  const vis = [];
+  for (const o of objects) {
+    const dx = o.x - cam.x, dy = o.y - cam.y, rx = dx * c - dy * s, ry = dx * s + dy * c;
+    const sx = cx + rx, sy = cy + ry * squash;
+    if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 60) continue;
+    vis.push({ o, sx, sy, ry });
+  }
+  vis.sort((a, b) => a.ry - b.ry);
+  sctx.globalAlpha = 0.28;
+  for (const v of vis) { // blob shadows: the silhouette of the stack, nudged along the ground
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.translate(Math.round(v.sx + 3), Math.round(v.sy + 2 * squash)); sctx.scale(1, squash); sctx.rotate(v.o.rot - cam.a);
+    sctx.drawImage(v.o.m.shadow, -v.o.m.W / 2, -v.o.m.L / 2);
+  }
+  sctx.globalAlpha = 1;
+  let draws = 0;
+  for (const v of vis) draws += drawStack(sctx, v.o.m, v.sx, v.sy, v.o.rot - cam.a, o2);
+  $('stats').textContent = ` ${vis.length} stacks, ${draws} drawImage calls/frame.`;
+
+  // anatomy view: same routine, bigger, with the layers pulled apart
+  const m = MODELS[selected], exploded = opt.explode > 1.05;
+  const foot = Math.hypot(m.W, m.L), rise = m.H * Math.cos(opt.pitch) * opt.spacing * opt.explode;
+  const sc = Math.min(4, 200 / foot, (anat.height - 16) / (rise + foot * Math.sin(opt.pitch))); // keep the exploded stack in frame
+  actx.setTransform(1, 0, 0, 1, 0, 0); actx.clearRect(0, 0, anat.width, anat.height);
+  const o3 = { pitch: opt.pitch, spacing: opt.spacing * opt.explode, scale: sc, fill: opt.fill && !exploded, shade: opt.shade };
+  const tall = m.H * Math.cos(opt.pitch) * o3.spacing * sc;
+  drawStack(actx, m, anat.width / 2, anat.height / 2 + tall / 2, t * 0.0006, o3);
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt); render(now);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
