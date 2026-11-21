@@ -16,7 +16,12 @@
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px; }
   .card h2 { font-size:13px; margin:0 0 8px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); }
   canvas { image-rendering:pixelated; display:block; width:100%; border-radius:4px; background:#0d0e13; }
-  #scene { cursor:grab; touch-action:none; }
+  #scene { cursor:grab; touch-action:pan-y; }
+  #pad { display:none; justify-content:space-between; margin-top:10px; gap:10px; user-select:none; -webkit-user-select:none; }
+  #pad div { display:flex; gap:10px; }
+  #pad button { width:64px; height:56px; font-size:22px; border-radius:10px; touch-action:none; -webkit-touch-callout:none; }
+  #pad button.down { background:var(--acc); color:#1a1300; }
+  @media (pointer:coarse), (max-width:860px) { #pad { display:flex; } .keys { display:none; } main { padding:14px 12px 32px; } button { padding:8px 12px; } input[type=range] { height:28px; } }
   label { display:grid; grid-template-columns:110px 1fr 44px; gap:8px; align-items:center; margin:6px 0; }
   label span:last-child { text-align:right; color:var(--acc); }
   input[type=range] { width:100%; accent-color:var(--acc); }
@@ -41,8 +46,12 @@
     <section class="card">
       <h2>Scene</h2>
       <canvas id="scene" width="420" height="280"></canvas>
-      <p class="hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows drive &middot;
-        <kbd>Q</kbd><kbd>E</kbd> or drag to orbit the camera &middot; the car self-drives until you take over.
+      <div id="pad">
+        <div><button data-k="a" aria-label="Steer left">&#9664;</button><button data-k="d" aria-label="Steer right">&#9654;</button></div>
+        <div><button data-k="s" aria-label="Brake / reverse">&#9660;</button><button data-k="w" aria-label="Accelerate">&#9650;</button></div>
+      </div>
+      <p class="hint"><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows drive &middot;
+        <kbd>Q</kbd><kbd>E</kbd> or drag to orbit the camera &middot;</span> Drag the scene sideways to orbit &middot; the car self-drives until you take over.
         <span id="stats"></span></p>
     </section>
 
@@ -232,7 +241,14 @@ const cam = { x: MID, y: MID, a: 0.6 };
 let drag = null;
 scene.addEventListener('pointerdown', e => { drag = e.clientX; scene.setPointerCapture(e.pointerId); });
 scene.addEventListener('pointermove', e => { if (drag != null) { cam.a += (e.clientX - drag) * 0.01; drag = e.clientX; } });
-scene.addEventListener('pointerup', () => drag = null);
+['pointerup', 'pointercancel'].forEach(t => scene.addEventListener(t, () => drag = null));
+// on-screen driving pad (touch): each button just holds down the matching key
+document.querySelectorAll('#pad button').forEach(b => {
+  const set = on => e => { e.preventDefault(); keys[b.dataset.k] = on; b.classList.toggle('down', on); if (on) player.manual = true; };
+  b.addEventListener('pointerdown', set(true));
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => b.addEventListener(t, set(false)));
+  b.addEventListener('contextmenu', e => e.preventDefault());
+});
 
 const opt = { pitch: 0, spacing: 1, explode: 1, fill: true, shade: true, orbit: false };
 const bindRange = (id, fmt, set) => { const el = $(id), f = () => { set(+el.value); $(id + 'V').textContent = fmt(+el.value); }; el.addEventListener('input', f); f(); };
