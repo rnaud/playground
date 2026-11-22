@@ -8,7 +8,7 @@
 </head>
 <body>
 <main>
-  <header class="top"><h1>Sprite Stacking Playground</h1><a href="../voxels/">compare: voxel version &rarr;</a></header>
+  <header class="top"><h1>Sprite Stacking Playground</h1><nav id="worlds"></nav><a class="keep" href="../voxels/">compare: voxel version &rarr;</a></header>
   <p>Every object below is a pile of flat pixel-art slices (horizontal cross-sections). Each frame, every
      slice is rotated in 2D and drawn one pixel-row higher than the last. No 3D engine, no meshes, no voxels
      at render time &mdash; just <code>drawImage</code> in a loop.</p>
@@ -16,13 +16,14 @@
   <div class="grid">
     <section class="card">
       <h2>Scene</h2>
-      <canvas id="scene" width="420" height="280"></canvas>
+      <div class="stage"><canvas id="scene" width="420" height="280"></canvas><span id="fps"></span><button id="act"></button></div>
       <div id="pad">
         <div><button data-k="a" aria-label="Steer left">&#9664;</button><button data-k="d" aria-label="Steer right">&#9654;</button></div>
         <div><button data-k="s" aria-label="Brake / reverse">&#9660;</button><button data-k="w" aria-label="Accelerate">&#9650;</button></div>
       </div>
       <p class="hint"><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows drive &middot;
-        <kbd>Q</kbd><kbd>E</kbd> or drag to orbit the camera &middot;</span> Drag the scene sideways to orbit &middot; the car self-drives until you take over.
+        <kbd>Q</kbd><kbd>E</kbd> or drag to orbit the camera &middot;</span> Drag the scene sideways to orbit (or to look around on foot) &middot; the car self-drives until you take over &middot;
+        <b>Get out</b> (or <kbd>F</kbd>) to walk in first person, then walk up to any car and <b>Get in</b>.
         <span id="stats"></span></p>
     </section>
 
@@ -81,7 +82,7 @@ for (const d of Object.values(MODEL_DEFS)) MODELS[d.name] = makeModel(d.name, d.
 function drawStack(ctx, m, x, y, rot, o) {
   const squash = Math.sin(o.pitch), lift = Math.cos(o.pitch) * o.spacing * o.scale;
   const slices = o.shade ? m.shaded : m.flat;
-  const sub = o.fill ? Math.max(1, Math.ceil(lift)) : 1;   // repeat each slice to plug gaps between layers
+  const sub = o.fill ? Math.min(6, Math.max(1, Math.ceil(lift))) : 1;   // repeat each slice to plug gaps between layers
   let draws = 0;
   for (let i = 0; i < m.H; i++) for (let s = 0; s < sub; s++) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -96,46 +97,47 @@ function drawStack(ctx, m, x, y, rot, o) {
 }
 
 // ---------- setup ----------
-const ground = makeGround(), { objects, player } = makeWorld(MODELS);
+const ground = makeGround(), world = makeWorld(MODELS);
 const scene = $('scene'), sctx = scene.getContext('2d'), anat = $('anatomy'), actx = anat.getContext('2d');
 sctx.imageSmoothingEnabled = actx.imageSmoothingEnabled = false;
-const cam = { x: player.x, y: player.y, a: 0.6 };
-bindInput(scene, cam, player);
+const cam = { x: world.player.x, y: world.player.y, a: 0.6 };
+bindInput(scene, cam, world);
 
 const opt = { pitch: 0, spacing: 1, explode: 1, fill: true, shade: true, orbit: false };
-bindRange('pitch', v => v + '\u00b0', v => opt.pitch = v * Math.PI / 180);
+bindRange('pitch', v => v + '°', v => opt.pitch = v * Math.PI / 180);
 bindRange('spacing', v => v.toFixed(1) + 'px', v => opt.spacing = v);
-bindRange('explode', v => '\u00d7' + v.toFixed(1), v => opt.explode = v);
+bindRange('explode', v => '×' + v.toFixed(1), v => opt.explode = v);
 bindToggles(opt, ['fill', 'shade', 'orbit']);
 
-let selected = 'car';
+let selected = PICKABLE[0];
 buildPicker(name => {
   selected = name;
   const box = $('slices'); box.innerHTML = '';
-  const m = MODELS[name];
+  const m = MODELS[name], k = Math.min(2, 60 / m.L);
   m.flat.forEach((s, i) => {
+    if (m.H > 40 && i % 4) return;                                   // very tall models: show every 4th slice
     const f = document.createElement('figure'), c = mkCanvas(m.W, m.L);
-    c.getContext('2d').drawImage(s, 0, 0); c.style.height = m.L * 2 + 'px';
+    c.getContext('2d').drawImage(s, 0, 0); c.style.height = m.L * k + 'px';
     f.append(c, document.createElement('figcaption')); f.lastChild.textContent = 'z' + i;
     box.append(f);
   });
 });
 
-// ---------- loop ----------
-function render(t) {
+// ---------- top-down view ----------
+function renderTop() {
   const W = scene.width, H = scene.height, cx = W / 2, cy = H / 2 + 20;
   const squash = Math.sin(opt.pitch), c = Math.cos(-cam.a), s = Math.sin(-cam.a);
   sctx.setTransform(1, 0, 0, 1, 0, 0);
-  sctx.fillStyle = '#2b6a4a'; sctx.fillRect(0, 0, W, H);
+  sctx.fillStyle = DEF.bg; sctx.fillRect(0, 0, W, H);
   sctx.translate(cx, cy); sctx.scale(1, squash); sctx.rotate(-cam.a); sctx.translate(-cam.x, -cam.y);
   sctx.drawImage(ground, 0, 0);
   // project, cull, then painter-sort back to front
   const o2 = { pitch: opt.pitch, spacing: opt.spacing, scale: 1, fill: opt.fill, shade: opt.shade };
-  const vis = [];
-  for (const o of objects) {
+  const vis = [], lift = Math.cos(opt.pitch) * opt.spacing;
+  for (const o of world.objects) {
     const dx = o.x - cam.x, dy = o.y - cam.y, rx = dx * c - dy * s, ry = dx * s + dy * c;
-    const sx = cx + rx, sy = cy + ry * squash;
-    if (sx < -45 || sx > W + 45 || sy < -30 || sy > H + 60) continue;
+    const sx = cx + rx, sy = cy + ry * squash, mr = Math.hypot(o.m.W, o.m.L) / 2;
+    if (sx < -mr || sx > W + mr || sy < -mr || sy > H + mr + o.m.H * lift) continue;
     vis.push({ o, sx, sy, ry });
   }
   vis.sort((a, b) => a.ry - b.ry);
@@ -149,7 +151,55 @@ function render(t) {
   let draws = 0;
   for (const v of vis) draws += drawStack(sctx, v.o.m, v.sx, v.sy, v.o.rot - cam.a, o2);
   $('stats').textContent = ` ${vis.length} stacks, ${draws} drawImage calls/frame.`;
+}
 
+// ---------- first-person view ----------
+// Sprite stacks have no real sides, so on foot this is the classic 2D trick set: a software "mode 7" floor,
+// and every object drawn as a billboard: its stack viewed almost side-on, scaled by distance, far to near.
+let floorImg = null, groundPx = null;
+const packed = (r, g, b) => (255 << 24 | b << 16 | g << 8 | r) >>> 0;
+const FOG_PX = packed(...FP.fog), OUT_PX = packed(parseInt(DEF.bg.slice(1, 3), 16), parseInt(DEF.bg.slice(3, 5), 16), parseInt(DEF.bg.slice(5, 7), 16));
+function renderFP() {
+  const W = scene.width, H = scene.height, hz = H >> 1, rows = H - hz, ft = world.foot, fx = Math.cos(ft.yaw), fy = Math.sin(ft.yaw);
+  if (!groundPx) { groundPx = new Uint32Array(ground.getContext('2d').getImageData(0, 0, WORLD, WORLD).data.buffer); floorImg = sctx.createImageData(W, rows); }
+  sctx.setTransform(1, 0, 0, 1, 0, 0); sctx.globalAlpha = 1;
+  sctx.fillStyle = FP.sky; sctx.fillRect(0, 0, W, hz);
+  const buf = new Uint32Array(floorImg.data.buffer), [FR, FG, FB] = FP.fog;
+  for (let row = 0, o = 0; row < rows; row++) {                     // each screen row below the horizon is one line across the ground
+    const d = FP.eye * FP.focal / (row + 0.5), k = d / FP.focal, t = Math.min(1, Math.max(0, (d - FP.fog0) / (FP.far - FP.fog0)));
+    let wx = ft.x + fx * d + fy * (W / 2) * k, wy = ft.y + fy * d - fx * (W / 2) * k;
+    const sx = -fy * k, sy = fx * k;
+    for (let x = 0; x < W; x++, wx += sx, wy += sy) {
+      let c = FOG_PX;
+      if (t < 1) {
+        c = wx >= 0 && wy >= 0 && wx < WORLD && wy < WORLD ? groundPx[(wy | 0) * WORLD + (wx | 0)] : OUT_PX;
+        if (t > 0) { const r = c & 255, g = c >> 8 & 255, b = c >> 16 & 255; c = packed(r + (FR - r) * t, g + (FG - g) * t, b + (FB - b) * t); }
+      }
+      buf[o++] = c;
+    }
+  }
+  sctx.putImageData(floorImg, 0, hz);
+  const list = [];
+  for (const o of world.objects) {
+    const dx = o.x - ft.x, dy = o.y - ft.y, f = dx * fx + dy * fy;
+    if (f < 5 || f > FP.far) continue;
+    const s = FP.focal / f, sx = W / 2 + (-dx * fy + dy * fx) * s, ext = Math.hypot(o.m.W, o.m.L) / 2 * s;
+    if (sx < -ext || sx > W + ext) continue;
+    list.push({ o, f, sx, s });
+  }
+  list.sort((a, b) => b.f - a.f);
+  let draws = 0;
+  for (const v of list) {
+    sctx.globalAlpha = 1 - Math.min(1, Math.max(0, (v.f - FP.fog0) / (FP.far - FP.fog0)));
+    draws += drawStack(sctx, v.o.m, v.sx, hz + FP.eye * v.s, v.o.rot - ft.yaw - Math.PI / 2,
+      { pitch: Math.max(0.07, Math.atan2(FP.eye, v.f)), spacing: opt.spacing, scale: v.s, fill: opt.fill, shade: opt.shade });
+  }
+  sctx.globalAlpha = 1;
+  $('stats').textContent = ` On foot: ${list.length} billboards, ${draws} drawImage calls/frame.`;
+}
+
+function render(t) {
+  if (world.foot) renderFP(); else renderTop();
   // anatomy view: same routine, bigger, with the layers pulled apart
   const m = MODELS[selected], exploded = opt.explode > 1.05;
   const foot = Math.hypot(m.W, m.L), rise = m.H * Math.cos(opt.pitch) * opt.spacing * opt.explode;
@@ -162,8 +212,9 @@ function render(t) {
 
 let last = performance.now();
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  updateWorld(dt, objects, player, cam, opt); render(now);
+  const dt = Math.min(0.05, (now - last) / 1000), t0 = performance.now(); last = now;
+  updateWorld(dt, world, cam, opt); render(now);
+  tickHud(world, now, performance.now() - t0);
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
