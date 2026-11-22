@@ -175,7 +175,7 @@ function Renderer(canvas) {
 // ---------- setup ----------
 const ground = makeGround(), { objects, player } = makeWorld(MODELS);
 const scene = $('scene'), anat = $('anatomy'), R = Renderer(scene), RA = Renderer(anat);
-const cam = { x: MID, y: MID, a: 0.6 };
+const cam = { x: player.x, y: player.y, a: 0.6 };
 bindInput(scene, cam, player);
 
 const opt = { pitch: 0, spacing: 1, explode: 1, light: true, shade: true, orbit: false };
@@ -201,7 +201,7 @@ function render(t) {
   R.ground(ground, cam);
   const vis = objects.filter(ob => { // cull to the screen; no sorting needed, the depth buffer orders everything per pixel
     const dx = ob.x - cam.x, dy = ob.y - cam.y, sx = cx + dx * c - dy * s, sy = cy + (dx * s + dy * c) * squash;
-    return sx > -40 && sx < W + 40 && sy > -20 && sy < H + 60;
+    return sx > -45 && sx < W + 45 && sy > -30 && sy < H + 60;
   });
   for (const ob of vis) R.draw(ob.m, ob.x, ob.y, ob.rot, cam, o, 'shadow');
   for (const ob of vis) R.draw(ob.m, ob.x, ob.y, ob.rot, cam, o);

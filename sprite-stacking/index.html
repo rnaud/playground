@@ -99,7 +99,7 @@ function drawStack(ctx, m, x, y, rot, o) {
 const ground = makeGround(), { objects, player } = makeWorld(MODELS);
 const scene = $('scene'), sctx = scene.getContext('2d'), anat = $('anatomy'), actx = anat.getContext('2d');
 sctx.imageSmoothingEnabled = actx.imageSmoothingEnabled = false;
-const cam = { x: MID, y: MID, a: 0.6 };
+const cam = { x: player.x, y: player.y, a: 0.6 };
 bindInput(scene, cam, player);
 
 const opt = { pitch: 0, spacing: 1, explode: 1, fill: true, shade: true, orbit: false };
@@ -135,7 +135,7 @@ function render(t) {
   for (const o of objects) {
     const dx = o.x - cam.x, dy = o.y - cam.y, rx = dx * c - dy * s, ry = dx * s + dy * c;
     const sx = cx + rx, sy = cy + ry * squash;
-    if (sx < -40 || sx > W + 40 || sy < -20 || sy > H + 60) continue;
+    if (sx < -45 || sx > W + 45 || sy < -30 || sy > H + 60) continue;
     vis.push({ o, sx, sy, ry });
   }
   vis.sort((a, b) => a.ry - b.ry);
