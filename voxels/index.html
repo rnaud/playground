@@ -41,7 +41,7 @@
         <button id="smooth">Smooth edges</button>
       </div>
       <p class="hint" id="meshinfo"></p>
-      <p class="hint">Top-down snaps everything to whole pixels for a crisp, steady image; <b>Smooth edges</b> supersamples it instead. On foot is always supersampled.</p>
+      <p class="hint">Top-down pans in whole-pixel steps for a crisp, steady image; <b>Smooth edges</b> supersamples it instead. On foot is always supersampled.</p>
     </section>
   </div>
 </main>
@@ -101,8 +101,8 @@ void main() {
   } else {
     vec2 r = rot(world - u_cam.xy, -u_cam.z) * u_scale; float h = up * u_scale;
     float sx = u_view.z + r.x + u_shift.x * u_flat, sy = u_view.w + r.y * u_pitch.x - h * u_pitch.y + u_shift.y * u_flat * u_pitch.x;
-    vec2 org = rot(u_obj - u_cam.xy, -u_cam.z) * u_scale, os = u_view.zw + vec2(org.x, org.y * u_pitch.x), snap = floor(os + 0.5) - os;
-    sx += snap.x; sy += snap.y;                                       // whole-pixel steps: no crawling edges while the camera pans
+    vec2 org = rot(-u_cam.xy, -u_cam.z), os = u_view.zw + vec2(org.x, org.y * u_pitch.x), snap = floor(os + 0.5) - os;
+    sx += snap.x; sy += snap.y;   // snap the camera (not each object) to whole pixels: the world pans as one rigid image, with no crawling edges
     gl_Position = vec4(sx / u_view.x * 2.0 - 1.0, 1.0 - sy / u_view.y * 2.0, -(r.y * u_pitch.y + h * u_pitch.x) / 4000.0, 1.0); v_dist = 0.0;
   }
   vec2 n = rot(a_normal.xy, u_rot);                                   // world-space sun, so faces relight as things turn

@@ -129,14 +129,17 @@ function renderTop() {
   const squash = Math.sin(opt.pitch), c = Math.cos(-cam.a), s = Math.sin(-cam.a);
   sctx.setTransform(1, 0, 0, 1, 0, 0);
   sctx.fillStyle = DEF.bg; sctx.fillRect(0, 0, W, H);
-  sctx.translate(cx, cy); sctx.scale(1, squash); sctx.rotate(-cam.a); sctx.translate(-cam.x, -cam.y);
+  // snap the camera to whole pixels so the ground and every stack step together (no 1px wobble between them)
+  const ox = -cam.x * c + cam.y * s, oy = (-cam.x * s - cam.y * c) * squash;
+  const snapX = Math.round(cx + ox) - (cx + ox), snapY = Math.round(cy + oy) - (cy + oy);
+  sctx.translate(cx + snapX, cy + snapY); sctx.scale(1, squash); sctx.rotate(-cam.a); sctx.translate(-cam.x, -cam.y);
   sctx.drawImage(ground, 0, 0);
   // project, cull, then painter-sort back to front
   const o2 = { pitch: opt.pitch, spacing: opt.spacing, scale: 1, fill: opt.fill, shade: opt.shade };
   const vis = [], lift = Math.cos(opt.pitch) * opt.spacing;
   for (const o of world.objects) {
     const dx = o.x - cam.x, dy = o.y - cam.y, rx = dx * c - dy * s, ry = dx * s + dy * c;
-    const sx = cx + rx, sy = cy + ry * squash, mr = Math.hypot(o.m.W, o.m.L) / 2;
+    const sx = cx + rx + snapX, sy = cy + ry * squash + snapY, mr = Math.hypot(o.m.W, o.m.L) / 2;
     if (sx < -mr || sx > W + mr || sy < -mr || sy > H + mr + o.m.H * lift) continue;
     vis.push({ o, sx, sy, ry });
   }
