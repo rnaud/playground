@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voxel Playground</title>
+<link rel="stylesheet" href="../shared/style.css">
+</head>
+<body>
+<main>
+  <header class="top"><h1>Voxel Playground</h1><a href="../sprite-stacking/">&larr; compare: sprite stacking version</a></header>
+  <p>The same world and the same models as the sprite stacking page, but every filled cell is a real cube.
+     Each model is meshed once into triangles (only the exposed faces) and drawn with WebGL, a depth buffer
+     and per-face lighting &mdash; at the same low resolution, so the pixels stay chunky.</p>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Scene</h2>
+      <canvas id="scene" width="420" height="280"></canvas>
+      <div id="pad">
+        <div><button data-k="a" aria-label="Steer left">&#9664;</button><button data-k="d" aria-label="Steer right">&#9654;</button></div>
+        <div><button data-k="s" aria-label="Brake / reverse">&#9660;</button><button data-k="w" aria-label="Accelerate">&#9650;</button></div>
+      </div>
+      <p class="hint"><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows drive &middot;
+        <kbd>Q</kbd><kbd>E</kbd> or drag to orbit the camera &middot;</span> Drag the scene sideways to orbit &middot; the car self-drives until you take over.
+        <span id="stats"></span></p>
+    </section>
+
+    <section class="card">
+      <h2>Anatomy</h2>
+      <div class="row" id="picker"></div>
+      <canvas id="anatomy" width="220" height="190"></canvas>
+      <label><span>Explode</span><input id="explode" type="range" min="1" max="8" step="0.1" value="1"><span id="explodeV"></span></label>
+      <label><span>Camera pitch</span><input id="pitch" type="range" min="0" max="90" step="1" value="50"><span id="pitchV"></span></label>
+      <label><span>Voxel height</span><input id="spacing" type="range" min="0.5" max="2.5" step="0.1" value="1"><span id="spacingV"></span></label>
+      <div class="row">
+        <button id="light" class="on">Face lighting</button>
+        <button id="shade" class="on">Height shading</button>
+        <button id="orbit">Auto-orbit</button>
+      </div>
+      <p class="hint" id="meshinfo"></p>
+    </section>
+  </div>
+</main>
+
+<script src="../shared/sim.js"></script>
+<script>
+'use strict';
+// ---------- meshing: one quad per voxel face that touches empty space (bottom faces are never seen) ----------
+const FACES = [ // normal, then the 4 corners of the face on the unit cube
+  [[1, 0, 0], [1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]],
+  [[-1, 0, 0], [0, 0, 0], [0, 1, 0], [0, 1, 1], [0, 0, 1]],
+  [[0, 1, 0], [0, 1, 0], [1, 1, 0], [1, 1, 1], [0, 1, 1]],
+  [[0, -1, 0], [0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]],
+  [[0, 0, 1], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]],
+];
+function buildMesh(d) {
+  const { W, L, H, fn } = d, grid = new Array(W * L * H), at = (x, y, z) => x < 0 || y < 0 || z < 0 || x >= W || y >= L || z >= H ? null : grid[(z * L + y) * W + x];
+  let voxels = 0;
+  for (let z = 0; z < H; z++) for (let y = 0; y < L; y++) for (let x = 0; x < W; x++) { const c = fn(x, y, z); grid[(z * L + y) * W + x] = c; if (c != null) voxels++; }
+  const v = [];
+  for (let z = 0; z < H; z++) for (let y = 0; y < L; y++) for (let x = 0; x < W; x++) {
+    const c = at(x, y, z);
+    if (c == null) continue;
+    for (const [n, ...q] of FACES) {
+      if (at(x + n[0], y + n[1], z + n[2]) != null) continue;
+      for (const i of [0, 1, 2, 0, 2, 3]) // x,y centred on the model; z is the corner (0/1) and the layer travels separately so it can be exploded
+        v.push(x + q[i][0] - W / 2, y + q[i][1] - L / 2, q[i][2], z, (c >> 16 & 255) / 255, (c >> 8 & 255) / 255, (c & 255) / 255, n[0], n[1], n[2]);
+    }
+  }
+  return { ...d, data: new Float32Array(v), count: v.length / 10, voxels };
+}
+const MODELS = {};
+for (const d of Object.values(MODEL_DEFS)) MODELS[d.name] = buildMesh(d);
+
+// ---------- renderer ----------
+// Same camera as the sprite page: orthographic, ground squashed by sin(pitch), height shown by cos(pitch).
+const VS = `
+attribute vec3 a_pos; attribute float a_layer; attribute vec3 a_color; attribute vec3 a_normal;
+uniform vec2 u_obj; uniform float u_rot; uniform vec3 u_cam; uniform vec2 u_pitch; uniform vec4 u_view;
+uniform float u_scale, u_explode, u_zscale, u_H, u_flat, u_light, u_shade; uniform vec2 u_shift;
+varying vec3 v_color;
+vec2 rot(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(p.x * c - p.y * s, p.x * s + p.y * c); }
+void main() {
+  vec2 r = rot(u_obj + rot(a_pos.xy, u_rot) - u_cam.xy, -u_cam.z) * u_scale;
+  float h = (a_layer * u_explode + a_pos.z) * u_zscale * u_scale * (1.0 - u_flat);
+  float sx = u_view.z + r.x + u_shift.x, sy = u_view.w + r.y * u_pitch.x - h * u_pitch.y + u_shift.y;
+  gl_Position = vec4(sx / u_view.x * 2.0 - 1.0, 1.0 - sy / u_view.y * 2.0, -(r.y * u_pitch.y + h * u_pitch.x) / 4000.0, 1.0);
+  vec2 n = rot(a_normal.xy, u_rot);                                   // world-space sun, so faces relight as things turn
+  float side = 0.55 + 0.35 * max(0.0, dot(n, normalize(vec2(-0.5, 0.85))));
+  float k = mix(1.0, a_normal.z > 0.5 ? 1.0 : side, u_light);
+  k *= mix(1.0, 0.62 + 0.38 * a_layer / max(1.0, u_H - 1.0), u_shade);
+  v_color = a_color * k;
+}`;
+const FS = `precision mediump float; varying vec3 v_color; uniform vec4 u_tint;
+void main() { gl_FragColor = vec4(mix(v_color, u_tint.rgb, u_tint.a > 0.0 ? 1.0 : 0.0), u_tint.a > 0.0 ? u_tint.a : 1.0); }`;
+const GVS = `
+attribute vec2 a_p; uniform vec3 u_cam; uniform vec2 u_pitch; uniform vec4 u_view; uniform float u_world; varying vec2 v_uv;
+void main() {
+  vec2 d = a_p - u_cam.xy; float c = cos(-u_cam.z), s = sin(-u_cam.z);
+  vec2 r = vec2(d.x * c - d.y * s, d.x * s + d.y * c);
+  gl_Position = vec4((u_view.z + r.x) / u_view.x * 2.0 - 1.0, 1.0 - (u_view.w + r.y * u_pitch.x) / u_view.y * 2.0, 0.0, 1.0);
+  v_uv = a_p / u_world;
+}`;
+const GFS = `precision mediump float; varying vec2 v_uv; uniform sampler2D u_tex; void main() { gl_FragColor = texture2D(u_tex, v_uv); }`;
+
+function Renderer(canvas) {
+  const gl = canvas.getContext('webgl', { antialias: false, stencil: true, alpha: false });
+  if (!gl) return null;
+  const program = (vs, fs) => {
+    const p = gl.createProgram();
+    for (const [t, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
+      const s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+      gl.attachShader(p, s);
+    }
+    gl.linkProgram(p);
+    const u = {}, a = {};
+    for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i++) { const n = gl.getActiveUniform(p, i).name; u[n] = gl.getUniformLocation(p, n); }
+    for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES); i++) { const n = gl.getActiveAttrib(p, i).name; a[n] = gl.getAttribLocation(p, n); }
+    return { p, u, a };
+  };
+  const vox = program(VS, FS), gnd = program(GVS, GFS), buffers = new Map();
+  let groundBuf = null, groundTex = null, view = null, pitch = null;
+  const bufferFor = m => {
+    if (!buffers.has(m.name)) { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, m.data, gl.STATIC_DRAW); buffers.set(m.name, b); }
+    return buffers.get(m.name);
+  };
+  return {
+    stats: { draws: 0, tris: 0 },
+    begin(p, cx, cy, clear) {
+      view = [canvas.width, canvas.height, cx, cy]; pitch = [Math.sin(p), Math.cos(p)];
+      this.stats.draws = this.stats.tris = 0;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(...clear, 1); gl.clearStencil(0);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
+    },
+    ground(image, cam) {
+      if (!groundTex) {
+        groundTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, groundTex);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+        groundBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, groundBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, WORLD, 0, WORLD, WORLD, 0, 0, WORLD, WORLD, 0, WORLD]), gl.STATIC_DRAW);
+      }
+      gl.useProgram(gnd.p); gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.STENCIL_TEST);
+      gl.uniform3f(gnd.u.u_cam, cam.x, cam.y, cam.a); gl.uniform2fv(gnd.u.u_pitch, pitch); gl.uniform4fv(gnd.u.u_view, view); gl.uniform1f(gnd.u.u_world, WORLD);
+      gl.bindTexture(gl.TEXTURE_2D, groundTex); gl.bindBuffer(gl.ARRAY_BUFFER, groundBuf);
+      gl.enableVertexAttribArray(gnd.a.a_p); gl.vertexAttribPointer(gnd.a.a_p, 2, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.TRIANGLES, 0, 6); this.stats.draws++; this.stats.tris += 2;
+    },
+    // mode 'shadow': the mesh flattened onto the ground; the stencil stops overlapping faces darkening twice
+    draw(m, x, y, rot, cam, o, mode) {
+      const u = vox.u, a = vox.a, shadow = mode === 'shadow';
+      gl.useProgram(vox.p);
+      if (shadow) {
+        gl.disable(gl.DEPTH_TEST); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.enable(gl.STENCIL_TEST); gl.stencilFunc(gl.EQUAL, 0, 255); gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
+      } else { gl.enable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.STENCIL_TEST); }
+      gl.uniform2f(u.u_obj, x, y); gl.uniform1f(u.u_rot, rot); gl.uniform3f(u.u_cam, cam.x, cam.y, cam.a);
+      gl.uniform2fv(u.u_pitch, pitch); gl.uniform4fv(u.u_view, view);
+      gl.uniform1f(u.u_scale, o.scale); gl.uniform1f(u.u_explode, o.explode); gl.uniform1f(u.u_zscale, o.zscale); gl.uniform1f(u.u_H, m.H);
+      gl.uniform1f(u.u_flat, shadow ? 1 : 0); gl.uniform2f(u.u_shift, shadow ? 3 : 0, shadow ? 2 * pitch[0] : 0);
+      gl.uniform1f(u.u_light, o.light ? 1 : 0); gl.uniform1f(u.u_shade, o.shade ? 1 : 0);
+      gl.uniform4f(u.u_tint, 0, 0, 0, shadow ? 0.28 : 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(m));
+      for (const [name, size, off] of [['a_pos', 3, 0], ['a_layer', 1, 12], ['a_color', 3, 16], ['a_normal', 3, 28]]) {
+        gl.enableVertexAttribArray(a[name]); gl.vertexAttribPointer(a[name], size, gl.FLOAT, false, 40, off);
+      }
+      gl.drawArrays(gl.TRIANGLES, 0, m.count); this.stats.draws++; this.stats.tris += m.count / 3;
+    },
+  };
+}
+
+// ---------- setup ----------
+const ground = makeGround(), { objects, player } = makeWorld(MODELS);
+const scene = $('scene'), anat = $('anatomy'), R = Renderer(scene), RA = Renderer(anat);
+const cam = { x: MID, y: MID, a: 0.6 };
+bindInput(scene, cam, player);
+
+const opt = { pitch: 0, spacing: 1, explode: 1, light: true, shade: true, orbit: false };
+bindRange('pitch', v => v + '°', v => opt.pitch = v * Math.PI / 180);
+bindRange('spacing', v => '×' + v.toFixed(1), v => opt.spacing = v);
+bindRange('explode', v => '×' + v.toFixed(1), v => opt.explode = v);
+bindToggles(opt, ['light', 'shade', 'orbit']);
+
+let selected = 'car';
+buildPicker(name => {
+  selected = name;
+  const m = MODELS[name];
+  $('meshinfo').textContent = `${m.W}×${m.L}×${m.H} grid · ${m.voxels} voxels · ${m.count / 3} triangles after hiding buried faces · 1 draw call`;
+});
+
+// ---------- loop ----------
+function render(t) {
+  if (!R) { $('stats').textContent = ' WebGL is not available in this browser.'; return; }
+  const W = scene.width, H = scene.height, cx = W / 2, cy = H / 2 + 20;
+  const squash = Math.sin(opt.pitch), c = Math.cos(-cam.a), s = Math.sin(-cam.a);
+  const o = { scale: 1, explode: 1, zscale: opt.spacing, light: opt.light, shade: opt.shade };
+  R.begin(opt.pitch, cx, cy, [0x2b / 255, 0x6a / 255, 0x4a / 255]);
+  R.ground(ground, cam);
+  const vis = objects.filter(ob => { // cull to the screen; no sorting needed, the depth buffer orders everything per pixel
+    const dx = ob.x - cam.x, dy = ob.y - cam.y, sx = cx + dx * c - dy * s, sy = cy + (dx * s + dy * c) * squash;
+    return sx > -40 && sx < W + 40 && sy > -20 && sy < H + 60;
+  });
+  for (const ob of vis) R.draw(ob.m, ob.x, ob.y, ob.rot, cam, o, 'shadow');
+  for (const ob of vis) R.draw(ob.m, ob.x, ob.y, ob.rot, cam, o);
+  $('stats').textContent = ` ${vis.length} objects, ${R.stats.draws} draw calls, ${Math.round(R.stats.tris / 1000)}k triangles/frame.`;
+
+  const m = MODELS[selected], foot = Math.hypot(m.W, m.L), rise = m.H * Math.cos(opt.pitch) * opt.spacing * opt.explode;
+  const sc = Math.min(4, 200 / foot, (anat.height - 16) / (rise + foot * Math.sin(opt.pitch)));
+  RA.begin(opt.pitch, anat.width / 2, anat.height / 2 + rise * sc / 2, [0x0d / 255, 0x0e / 255, 0x13 / 255]);
+  RA.draw(m, 0, 0, t * 0.0006, { x: 0, y: 0, a: 0 }, { ...o, scale: sc, explode: opt.explode });
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  updateWorld(dt, objects, player, cam, opt); render(now);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
