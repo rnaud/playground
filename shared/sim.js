@@ -9,7 +9,7 @@ const WORLD_ID = new URLSearchParams(location.search).get('world') === 'paris' ?
 
 // ---------- models: each is a function (x,y,z) -> colour (or null for empty) on a W x L x H grid ----------
 const MODEL_DEFS = {};
-const def = (name, W, L, H, fn, only) => { if (!only || only === WORLD_ID) MODEL_DEFS[name] = { name, W, L, H, fn }; };
+const def = (name, W, L, H, fn, only) => { if (!only || only === WORLD_ID || window.ALL_MODELS) MODEL_DEFS[name] = { name, W, L, H, fn }; };
 
 // Cars are 16 wide x 30 long, nose at +y. One builder covers every body style:
 // kind sets where the cabin sits [rear y, front y, layers] and how steeply its glass leans.
