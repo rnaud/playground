@@ -80,7 +80,7 @@
   // The picture is drawn at the window's own shape (up to 1280 wide) and stretched to fill it.
   { const c = document.getElementById('scene'), k = Math.min(1, 1280 / innerWidth);
     c.width = Math.round(innerWidth * k / 2) * 2; c.height = Math.round(innerHeight * k / 2) * 2;
-    Object.assign(FP, { eye: 9, focal: c.width * 0.625, near: 1, far: 520, fog0: 24, fog: [15, 13, 22] }); }
+    Object.assign(FP, { eye: 16, focal: c.width * 0.625, near: 1, far: 520, fog0: 24, fog: [15, 13, 22] }); }
 </script>
 <script src="../shared/voxel.js"></script>
 <script src="render.js"></script>

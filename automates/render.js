@@ -9,7 +9,7 @@
 // The camera turns about the vertical and looks up and down by shearing the picture, so walls always stay upright.
 // Meshes use the same vertex layout as shared/voxel.js: x, y, corner z, layer, r, g, b, normal. A red above 1 marks a
 // glowing voxel and a green above 1 a shiny one.
-const MAXL = 16, MAXO = 10;
+const MAXL = 24, MAXO = 10;
 function AutomatesRenderer(canvas, world, GW, GH) {
   const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
   if (!gl) return null;
@@ -75,7 +75,7 @@ void main() {
 }`);
   const FULL = `out vec2 v; void main() { v = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(v * 2.0 - 1.0, 0.0, 1.0); }`;
   const lightP = prog(FULL, `in vec2 v; out vec4 o;
-uniform sampler2D u_a, u_n, u_d, u_lm, u_cells, u_prev, u_things; uniform vec4 u_eye, u_proj, u_fog; uniform vec3 u_view; uniform float u_world, u_far, u_sky, u_time, u_fast, u_dim; uniform vec2 u_grid;
+uniform sampler2D u_a, u_n, u_d, u_lm, u_fm, u_cells, u_prev, u_things; uniform vec3 u_lb[${MAXL}]; uniform vec4 u_eye, u_proj, u_fog; uniform vec3 u_view; uniform float u_world, u_far, u_sky, u_time, u_fast, u_dim; uniform vec2 u_grid;
 uniform vec4 u_lp[${MAXL}], u_lc[${MAXL}], u_occ[${MAXO}]; uniform int u_nl, u_no;
 float fwdOf(float z) { if (z < 0.1) z *= 10.0;                       // the weapon in hand is drawn into the front tenth of the depth range
   float A = (u_proj.w + u_proj.z) / (u_proj.w - u_proj.z), B = 2.0 * u_proj.w * u_proj.z / (u_proj.w - u_proj.z); return B / (A - (z * 2.0 - 1.0)); }
@@ -119,21 +119,24 @@ void main() {
   for (int i = 0; i < 8; i++) { float a = rot + float(i) * 0.785, r = (0.35 + 0.65 * fract(float(i) * 0.618)) * 2.2; vec2 uv = v + vec2(cos(a) * u_proj.x, sin(a) * u_proj.y) * r / f * 0.5;
     vec3 q = worldAt(uv, fwdOf(texture(u_d, uv).r)) - P; float d2 = dot(q, q); occ += max(dot(n, q) / sqrt(d2 + 1e-4) - 0.12, 0.0) / (1.0 + d2 * 0.12); }
   float ao = 1.0 - min(occ / 8.0 * 2.4, 0.8);
-  vec3 diff = vec3(0.0), spec = vec3(0.0), glow = vec3(0.0), D = -V; float T = length(P - O), jit = hash(v * 517.0 + u_time);
+  vec3 diff = vec3(0.0), spec = vec3(0.0), glow = vec3(0.0), D = -V, farl = texture(u_fm, (P.xy + n.xy * 4.0) / u_world).rgb; float T = length(P - O), jit = hash(v * 517.0 + u_time);   // farl: what every lamp gives here, baked; the lamps lit in full this frame take their share back out of it
   for (int i = 0; i < ${MAXL}; i++) { if (i >= u_nl) break; vec4 L = u_lp[i]; vec3 lc = u_lc[i].rgb;
     if (u_lc[i].a > 0.0 && u_fast < 0.5) {                             // light in the air: march the view ray and gather what each point receives, so beams are cut off by walls
       float reach = min(T, 170.0), sum = 0.0;
       for (int k = 0; k < 5; k++) { vec3 S = O + D * reach * (float(k) + jit) / 5.0; float dl = length(L.xyz - S); if (dl < L.w) sum += pow(1.0 - dl / L.w, 2.0) * wall(S.xy, L.xy); }
       glow += lc * sum * reach / 5.0 * 0.0034 * u_lc[i].a;
     }
-    vec3 d = L.xyz - P; float dist = length(d); if (dist > L.w) continue;
-    vec3 ld = d / dist; float ndl = dot(n, ld) * 0.8 + 0.2; if (ndl <= 0.0) continue;
+    vec3 d = L.xyz - P; float dist = length(d), fl = sqrt(dot(d.xy, d.xy) + 64.0); bool baked = u_lb[i].r + u_lb[i].g + u_lb[i].b > 0.0 && fl < L.w;
+    if (dist > L.w && !baked) continue;
+    vec3 ld = d / dist; float ndl = dot(n, ld) * 0.8 + 0.2; if (ndl <= 0.0 && !baked) continue;
     vec2 from = P.xy + n.xy * 1.4, side = vec2(-ld.y, ld.x) * 2.5; float sh = 0.5 * (wall(from, L.xy + side) + wall(from, L.xy - side)); if (sh <= 0.0) continue;
+    if (baked) farl -= u_lb[i] * pow(1.0 - fl / L.w, 2.0) * sh;
+    if (ndl <= 0.0 || dist > L.w) continue;
     float k = pow(1.0 - dist / L.w, 2.0) * sh * bodies(P, L.xyz); if (u_fast < 0.5 && k > 0.012) k *= things(P + n * 1.3, L.xyz, jit);
     diff += lc * ndl * k; spec += lc * pow(max(dot(n, normalize(ld + V)), 0.0), 48.0) * k;
   }
   vec3 amb = texture(u_lm, P.xy / u_world).rgb * u_dim;                 // (the baked light dims when the lamps go out)
-  vec3 c = A.rgb * (amb * ao + diff * mix(1.0, ao, 0.5)) + spec * N.a * 0.9;
+  vec3 c = A.rgb * (amb * ao + (diff + max(farl, 0.0) * u_dim) * mix(1.0, ao, 0.5)) + spec * N.a * 0.9;
   if (u_fast < 0.5 && N.a > 0.3 && n.z > 0.6) {                                        // polished floors mirror the room: follow the reflected ray across the last frame until it meets something
     vec3 Rr = reflect(D, normalize(mix(vec3(0.0, 0.0, 1.0), n, 0.35))); float hit = 0.0; vec2 huv = v;
     for (int i = 1; i <= 10; i++) { vec3 sp = screenOf(P + Rr * (float(i) + jit) * 3.4); if (sp.z < u_proj.z || sp.x < 0.0 || sp.x > 1.0 || sp.y < 0.0 || sp.y > 1.0) break;
@@ -154,7 +157,7 @@ void main() { float A = (u_proj.w + u_proj.z) / (u_proj.w - u_proj.z), B = 2.0 *
 void main() { vec3 c = vec3(0.0); for (int i = 0; i < 4; i++) c += texture(u_tex, v + (vec2(float(i & 1), float(i >> 1)) * 2.0 - 1.0) * u_texel).rgb; c *= 0.25; o = vec4(max(c - u_cut, 0.0), 1.0); }`);
   // exposure: one pixel that drifts towards whatever makes the average of the frame a comfortable brightness
   const exposeP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex, u_old;
-void main() { float l = dot(textureLod(u_tex, vec2(0.5), 20.0).rgb, vec3(0.3, 0.59, 0.11)), want = clamp(0.36 / (l + 0.04), 0.6, 2.2), old = texture(u_old, vec2(0.5)).r; o = vec4(old < 0.01 ? want : mix(old, want, 0.04)); }`);
+void main() { float l = dot(textureLod(u_tex, vec2(0.5), 20.0).rgb, vec3(0.3, 0.59, 0.11)), want = clamp(0.36 / (l + 0.04), 0.85, 1.35), old = texture(u_old, vec2(0.5)).r; o = vec4(old < 0.01 ? want : mix(old, want, 0.012)); }`);
   const finalP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex, u_b0, u_b1, u_b2, u_b3, u_exp; uniform float u_time, u_pain; uniform vec4 u_grade;   // grade: tint r, g, b and contrast
 void main() {
   vec3 c = texture(u_tex, v).rgb + texture(u_b0, v).rgb * 0.5 + texture(u_b1, v).rgb * 0.5 + texture(u_b2, v).rgb * 0.45 + texture(u_b3, v).rgb * 0.4;
@@ -193,7 +196,7 @@ void main() {
   const halton = (i, b) => { let f = 1, x = 0; while (i > 0) { f /= b; x += f * (i % b); i = Math.floor(i / b); } return x; };
   for (let i = 1, w = W, h = H; i <= 5; i++) { w = Math.max(2, w >> 1); h = Math.max(2, h >> 1); const t = colour(w, h); bloom.push({ t, f: fbo(t), w, h }); }
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  const cellsT = tex(GW, GH, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST); let lmT = null;
+  const cellsT = tex(GW, GH, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST); let lmT = null, fmT = null;
   const groundB = gl.createBuffer(), groundV = gl.createVertexArray();
   gl.bindVertexArray(groundV); gl.bindBuffer(gl.ARRAY_BUFFER, groundB); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, world, 0, world, world, 0, 0, world, world, 0, world]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -228,6 +231,7 @@ void main() {
     stats: { draws: 0, tris: 0 }, hdr, fast: false,                 // fast: skip the light beams and floor reflections
     free(m) { const e = meshes.get(m); if (e) { gl.deleteBuffer(e.buf); gl.deleteVertexArray(e.vao); meshes.delete(m); } },   // for a mesh that has been rebuilt
     setCells(rgba) { gl.bindTexture(gl.TEXTURE_2D, cellsT); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, GW, GH, gl.RGBA, gl.UNSIGNED_BYTE, rgba); },   // r: blocks light, g: how shiny the floor is, b and a: which picture its floor and ceiling show
+    setFarMap(rgb, n) { fmT = fmT || tex(n, n, gl.RGB16F, gl.RGB, gl.FLOAT, gl.LINEAR); gl.bindTexture(gl.TEXTURE_2D, fmT); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, n, n, gl.RGB, gl.FLOAT, rgb); },
     setLightMap(rgb, n) { lmT = lmT || tex(n, n, gl.RGB8, gl.RGB, gl.UNSIGNED_BYTE, gl.LINEAR); gl.bindTexture(gl.TEXTURE_2D, lmT); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, n, n, gl.RGB, gl.UNSIGNED_BYTE, rgb); },
     setThings(rg, n) { thingsT = thingsT || tex(n, n, gl.RG8, gl.RG, gl.UNSIGNED_BYTE, gl.NEAREST); gl.bindTexture(gl.TEXTURE_2D, thingsT); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, n, n, gl.RG, gl.UNSIGNED_BYTE, rg); },   // what stands on each unit of floor: its top and its underside, in 32nds of 255
     begin(e, focal, near, far) {
@@ -258,10 +262,10 @@ void main() {
       const lit = lits[flip].t, prev = lits[1 - flip].t, ex = exps[flip], exOld = exps[1 - flip];   // lit: the merged picture; prev: last frame's
       gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
       gl.bindFramebuffer(gl.FRAMEBUFFER, curF); gl.viewport(0, 0, W, H);
-      const u = lightP.u, nl = Math.min(MAXL, o.lights.length), no = Math.min(MAXO, o.bodies.length), lp = new Float32Array(MAXL * 4), lc = new Float32Array(MAXL * 4), oc = new Float32Array(MAXO * 4);
-      for (let i = 0; i < nl; i++) { lp.set(o.lights[i].slice(0, 4), i * 4); lc.set(o.lights[i].slice(4, 8), i * 4); }
+      const u = lightP.u, nl = Math.min(MAXL, o.lights.length), no = Math.min(MAXO, o.bodies.length), lp = new Float32Array(MAXL * 4), lc = new Float32Array(MAXL * 4), lb = new Float32Array(MAXL * 3), oc = new Float32Array(MAXO * 4);
+      for (let i = 0; i < nl; i++) { lp.set(o.lights[i].slice(0, 4), i * 4); lc.set(o.lights[i].slice(4, 8), i * 4); if (o.lights[i].length > 8) lb.set(o.lights[i].slice(8, 11), i * 3); }
       for (let i = 0; i < no; i++) oc.set(o.bodies[i], i * 4);
-      gl.useProgram(lightP.p); camera(u); bind(0, gA, u.u_a); bind(1, gN, u.u_n); bind(2, gD, u.u_d); bind(3, lmT, u.u_lm); bind(4, cellsT, u.u_cells); bind(5, prev, u.u_prev); bind(6, thingsT, u.u_things);
+      gl.useProgram(lightP.p); camera(u); bind(0, gA, u.u_a); bind(1, gN, u.u_n); bind(2, gD, u.u_d); bind(3, lmT, u.u_lm); bind(4, cellsT, u.u_cells); bind(5, prev, u.u_prev); bind(6, thingsT, u.u_things); bind(7, fmT, u.u_fm); gl.uniform3fv(u.u_lb, lb);
       gl.uniform4fv(u.u_lp, lp); gl.uniform4fv(u.u_lc, lc); gl.uniform4fv(u.u_occ, oc); gl.uniform1i(u.u_nl, nl); gl.uniform1i(u.u_no, no);
       gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform3f(u.u_view, eye.pitch || 0, jit[0], jit[1]); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0); gl.uniform1f(u.u_dim, o.dim == null ? 1 : o.dim);
       full();

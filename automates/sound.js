@@ -36,14 +36,30 @@ function Sound(ctx) {
     g.gain.value = vol; f.type = 'lowpass'; f.frequency.value = 400 + 17000 * Math.pow(1 - Math.min(.95, muffle), 2.5); p.pan.value = Math.max(-1, Math.min(1, pan)); s.gain.value = send;
     g.connect(f); f.connect(p); p.connect(dry); p.connect(s); s.connect(verb); return g;
   };
-  const shot = (d, t, crack, body, boomHz, len) => {                         // a gunshot: the crack, the body of the report, the thump you feel
-    tick(d, t, crack * .8, 5000); noise(d, t, len * .35, crack, 'bandpass', 2600, 900, .7); noise(d, t, len, body, 'lowpass', 1800, 240, .6); tone(d, t, len * .8, body * 1.1, 'sine', boomHz * 2.2, boomHz * .45);
+  const thump = (dst, t, peak, hz, dur) => {                                // the part of a shot you feel: a sine that falls to its note in a few hundredths, like a kick drum, and then holds it
+    const o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(hz * 3.2, t); o.frequency.exponentialRampToValueAtTime(hz, t + .03); o.frequency.exponentialRampToValueAtTime(hz * .7, t + dur);
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + .002); g.gain.setTargetAtTime(0, t + .012, dur / 8); o.connect(g); g.connect(dst); o.start(t); o.stop(t + dur * 1.5);
   };
+  const air = (dst, t, dur, peak, type, f0, f1, attack = .001) => {         // noise that dies away evenly, the way a report does, instead of collapsing at once
+    const s = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain(); s.buffer = white; s.loop = true; f.type = type; f.Q.value = .6;
+    f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t + dur); g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + attack); g.gain.setTargetAtTime(0, t + attack, dur / 4.5);
+    s.connect(f); f.connect(g); g.connect(dst); s.start(t, Math.random() * 1.5); s.stop(t + attack + dur * 1.5);
+  };
+  // A gunshot in five layers, each with its own level: the transient (clipped, so it stays sharp), the body of the report,
+  // the thump underneath, the action working a moment later, and the tail the room gives back.
+  const shot = (d, t, o) => {
+    const p = rnd(.95, 1.05), w = drive(o.drive || 2); w.connect(d);
+    noise(w, t, .005, o.crack * 2.2, 'highpass', 900, 900, .5, .0004); air(d, t, .05, o.crack * .55, 'highpass', 3800 * p, 2400);
+    air(w, t, o.len, o.body * 1.5, 'bandpass', 950 * p, 300); air(w, t, o.len * .55, o.body, 'lowpass', 3200, 700);
+    if (o.sub) thump(w, t, o.sub, o.hz * p, o.len * 1.5);
+    air(d, t + .01, o.tail, o.body * .2, 'lowpass', 1500, 240, .03); air(d, t + .02, o.tail * .5, o.body * .09, 'bandpass', 2300, 900, .05);
+  };
+  const clack = (d, t, peak, f) => { tick(d, t, peak, f * 2); air(d, t, .04, peak * .9, 'bandpass', f, f * .6); metal(d, t, f * 1.3 * rnd(.95, 1.05), .045, peak * .3); };   // steel parts meeting: a slide, a bolt, a pump
   const FX = {
-    pistol: (d, t) => shot(d, t, .7, .55, 95, .16),
-    smg: (d, t) => shot(d, t, .55, .4, 120 * rnd(.92, 1.08), .09),
-    shotgun: (d, t) => { const w = drive(3); w.connect(d); shot(w, t, .9, .95, 62, .34); noise(d, t + .02, .5, .3, 'lowpass', 600, 120); tick(d, t + .34, .25, 2200); metal(d, t + .34, 900, .05, .1); tick(d, t + .46, .3, 1800); metal(d, t + .46, 700, .06, .12); },   // then the pump
-    tesla: (d, t) => { for (let i = 0; i < 4; i++) { const s = t + i * .028; tone(d, s, .05, .16, 'sawtooth', rnd(900, 2600), rnd(200, 900)); noise(d, s, .04, .22, 'highpass', rnd(3000, 7000)); } tone(d, t, .22, .18, 'square', 110, 55); },
+    pistol: (d, t) => { shot(d, t, { crack: .8, body: .6, sub: .7, hz: 68, len: .2, tail: .55 }); clack(d, t + .055, .16, 1700); },
+    smg: (d, t) => { shot(d, t, { crack: .65, body: .5, sub: .5, hz: 84, len: .12, tail: .2, drive: 2.2 }); clack(d, t + .034, .1, 2100); },
+    shotgun: (d, t) => { shot(d, t, { crack: 1.3, body: 1, sub: .85, hz: 52, len: .4, tail: 1.1, drive: 2.8 }); air(d, t + .006, .3, .35, 'bandpass', 420, 160); clack(d, t + .36, .3, 900); air(d, t + .36, .07, .2, 'lowpass', 500, 200); clack(d, t + .49, .36, 760); },   // both barrels' worth, then the pump back and forward
+    tesla: (d, t) => { const w = drive(2); w.connect(d); thump(w, t, .6, 58, .3); air(w, t, .12, .5, 'bandpass', 1400, 500); for (let i = 0; i < 4; i++) { const s = t + i * .026; tone(d, s, .05, .3, 'sawtooth', rnd(900, 2600), rnd(200, 900)); noise(d, s, .05, .55, 'highpass', rnd(3000, 7000)); } tone(w, t, .3, .3, 'square', 104, 52); air(d, t + .02, .5, .08, 'highpass', 5000, 2500, .02); },   // the discharge: a thud, the arc tearing, the hum dropping away
     click: (d, t) => { tick(d, t, .3, 2500); tick(d, t + .05, .18, 4000); },
     hit: (d, t) => { tick(d, t, .4, 2500); metal(d, t, rnd(700, 1500), .16, .22); noise(d, t, .05, .2, 'bandpass', 1800, 900, 1.5); },               // a round ringing off plate
     die: (d, t) => {                                                         // a machine coming apart: the crash, the plates ringing, the motor winding down, bits landing
@@ -51,7 +67,7 @@ function Sound(ctx) {
       tone(d, t, .7, .22, 'sawtooth', rnd(340, 460), 38); for (let i = 0; i < 7; i++) { const s = t + rnd(.15, .95); tick(d, s, rnd(.08, .25), rnd(1500, 4000)); metal(d, s, rnd(900, 2200), .06, .06); }
     },
     boom: (d, t) => { const w = drive(4); w.connect(d); tone(w, t, 1, 1, 'sine', 82, 24, .004); noise(w, t, .9, .9, 'lowpass', 900, 70); noise(d, t, .12, .6, 'bandpass', 2400, 600); noise(d, t + .25, 1.3, .22, 'lowpass', 400, 90, .5, .2); for (let i = 0; i < 6; i++) tick(d, t + rnd(.3, 1.3), rnd(.05, .15), rnd(1200, 3500)); },
-    enemy: (d, t) => shot(d, t, .5, .45, 78, .2),
+    enemy: (d, t) => shot(d, t, { crack: .5, body: .5, sub: .2, hz: 110, len: .16, tail: .4, drive: 1.6 }),                   // theirs are thinner than yours: less underneath
     smash: (d, t) => { noise(d, t, .28, .5, 'bandpass', 900, 260, 1); tick(d, t, .4, 1800); tone(d, t, .14, .3, 'sine', 130, 60); for (let i = 0; i < 4; i++) tick(d, t + .05 + i * .04, .2, rnd(900, 2400)); },   // wood and hoops giving way
     glass: (d, t) => { noise(d, t, .32, .3, 'highpass', 5200, 7400, .6); for (let i = 0; i < 7; i++) { tick(d, t + i * .028, .26, rnd(4200, 8200)); tone(d, t + i * .03, .08, .05, 'sine', rnd(2600, 5200)); } },                       // a pane, or a chandelier
     roar: (d, t) => { const w = drive(3); w.connect(d); for (const f of [55, 82.5, 110, 164]) tone(w, t, 1.3, .16, 'sawtooth', f * .9, f, .25); noise(d, t, 1.2, .22, 'lowpass', 500, 160, 1, .2); tone(d, t + .1, .9, .1, 'square', 220, 147, .1); },   // Le Colosse: a furnace and a foghorn
@@ -105,7 +121,7 @@ function Sound(ctx) {
   } };
   const beds = {}; let room = null, next = 1;
   // how loud each effect sits in the mix: guns and pain up front, the rest behind them
-  const LEVEL = { pistol: 2.2, smg: 2.3, shotgun: 1.8, tesla: 2, click: 2, hit: 2.4, die: 1.5, boom: 1.25, enemy: 2.4, wake: 2, door: 1.3, pickup: 1.6, key: 1.5, hurt: 3, swap: 1.6, train: 1.6 };
+  const LEVEL = { pistol: 1.8, smg: 1.6, shotgun: 1.8, tesla: 1.7, click: 2, hit: 2.4, die: 1.5, boom: 1.25, enemy: 2.4, wake: 2, door: 1.3, pickup: 1.6, key: 1.5, hurt: 3, swap: 1.6, train: 1.6 };
   const play = (kind, o = {}) => { const f = FX[kind] || STEP[kind]; if (f) f(bus((o.vol == null ? 1 : o.vol) * (LEVEL[kind] || 1), o.pan || 0, o.muffle || 0, o.send == null ? 1 : o.send), now() + .001); };
   return {
     play, kinds: Object.keys(FX), steps: Object.keys(STEP), rooms: Object.keys(ROOMS),
