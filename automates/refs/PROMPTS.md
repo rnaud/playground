@@ -59,3 +59,10 @@ Glowing pixels (lamp glass, furnace grilles, portholes, muzzle flashes) are pick
 | --- | --- | --- |
 | `turn-automate`, `turn-scaphandre`, `turn-colosse` | 16:9 | "A character turnaround sheet ... Exactly three views of the SAME robot in a single row ... seen from the front, seen exactly from its left side in profile, seen from behind", all in "the same neutral A-pose", on magenta. `build_art.py` carves each into a 3D voxel volume: solid where the front and side outlines agree, coloured from the front and back views. |
 | `../../music/explore.mp3`, `../../music/combat.mp3` | n/a | ElevenLabs Music v2.5 through Higgsfield's agent chat, 90 seconds each, instrumental: a slow minor-key musette waltz for exploring, and fast gypsy jazz for a fight. |
+
+### Added for the 3D weapons
+
+| Files | Aspect | What it is |
+| --- | --- | --- |
+| `guns-side` | 16:9 | Four guns "each shown exactly from the side as a flat orthographic side elevation ... every barrel pointing to the right, no hands", on magenta. `build_art.py` carves each into a 3D model with a fixed, rounded thickness (a top-view sheet was requested twice and came back as side views both times). |
+| `hand` | 16:9 | "Two views of the same right forearm and hand ... seen exactly from the side ... seen exactly from directly above", fist closed, on magenta. Carved from both views. |

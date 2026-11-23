@@ -225,6 +225,36 @@ for name, hv in [('automate', 68), ('scaphandre', 80), ('colosse', 92)]:
                 px[(y % cols) * W + x, (y // cols) * H + z] = c
     add('vox_' + name, sheet); vox[name] = [W, L, H, cols]
 
+# ---- true 3D weapons and the hand that holds them, carved from a side view and a top view (barrel to the right) ----
+# Solid where the side outline and the top outline agree, rounded off like the machines; the barrel runs along the model's y.
+def carve2(side, top):                                               # `top` may be a plain width in voxels when there is no top view
+    Lg, H = side.size; W = top if isinstance(top, int) else top.height
+    S, T, dist = side.load(), None if isinstance(top, int) else top.load(), outline_distance(side)
+    cols = max(1, 2040 // W); sheet = Image.new('RGBA', (cols * W, -(-Lg // cols) * H)); px = sheet.load()
+    for y in range(Lg):
+        run = [w for w in range(W) if not T or T[y, w][3]]
+        if not run: continue
+        mid, ox, oy = (run[0] + run[-1]) / 2, (y % cols) * W, (y // cols) * H
+        for z in range(H):
+            if S[y, z][3]:
+                for w in run:
+                    if abs(w - mid) <= .8 + 1.25 * dist[z][y]: px[ox + w, oy + z] = S[y, z]
+        for w in (run if T else []):                                 # the top view colours the uppermost voxel of each column
+            for z in range(H):
+                if px[ox + w, oy + z][3]: px[ox + w, oy + z] = T[y, w][:3] + (px[ox + w, oy + z][3],); break
+    return sheet, [W, Lg, H, cols]
+sides = load('guns-side')
+if sides:
+    for (name, length, thick), a in zip([('pistol', 40, 7), ('shotgun', 92, 9), ('smg', 72, 9), ('tesla', 74, 13)], components(key(sides), 4)):
+        side = fit(a, width=length)
+        if name == 'tesla': glow(side, 'cyan')
+        sheet, dims = carve2(side, thick); add('vox_gun_' + name, sheet); vox['gun_' + name] = dims
+im = load('hand')
+if im:
+    hv = components(key(im), 2)
+    if len(hv) == 2:
+        side = fit(hv[0], width=50); sheet, dims = carve2(side, shrink(hv[1], (50, max(3, round(hv[1].height * 50 / hv[1].width))))); add('vox_hand', sheet); vox['hand'] = dims
+
 # ---- pack: tallest first, in rows ----
 ATLAS_W, x, y, row = 2048, 0, 0, 0
 rects = {}

@@ -12,7 +12,7 @@ function AutomatesRenderer(canvas, world, GW, GH) {
   if (!gl) return null;
   const hdr = !!(gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float'));
   const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
-  const SS = Math.max(1, Math.min(2, +new URLSearchParams(location.search).get('ss') || 1.5)), W = Math.round(canvas.width * SS), H = Math.round(canvas.height * SS);
+  const SS = Math.max(1, Math.min(2, +new URLSearchParams(location.search).get('ss') || 1.25)), W = Math.round(canvas.width * SS), H = Math.round(canvas.height * SS);
   const prog = (vs, fs) => {
     const p = gl.createProgram();
     for (const [t, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
@@ -51,21 +51,28 @@ out vec3 v_color, v_normal; out vec2 v_mat;
 void main() { gl_Position = project(i_p.xyz + a_c * i_p.w); v_color = i_c.rgb; v_normal = a_n; v_mat = vec2(i_c.a, 0.0); }`, GOUT + `in vec3 v_color, v_normal; in vec2 v_mat;
 void main() { o_a = vec4(v_color, v_mat.x); o_n = vec4(normalize(v_normal) * 0.5 + 0.5, v_mat.y); }`);
   // floors and ceilings: one textured plane each, with relief faked from the picture's own light and dark
+  // floors and ceilings: one textured plane each. The picture's own light and dark is read as height, and the view ray is
+  // marched down into it, so joints and gaps between stones really sit below the surface and hide behind their edges.
   const groundP = prog(CAM + `layout(location = 0) in vec2 a_p; uniform float u_height; out vec2 v_w;
-void main() { v_w = a_p; gl_Position = project(vec3(a_p, u_height)); }`, GOUT + `in vec2 v_w; uniform sampler2D u_tex, u_cells; uniform float u_world, u_up; uniform vec2 u_grid, u_texel;
+void main() { v_w = a_p; gl_Position = project(vec3(a_p, u_height)); }`, GOUT + `in vec2 v_w; uniform sampler2D u_tex, u_cells; uniform float u_world, u_up, u_height; uniform vec2 u_grid, u_texel; uniform vec4 u_eye;
 float lum(vec2 uv) { return dot(texture(u_tex, uv).rgb, vec3(0.3, 0.59, 0.11)); }
 void main() {
-  vec2 uv = v_w / u_world; vec4 t = texture(u_tex, uv); if (t.a < 0.5) discard;
-  float l = lum(uv), k = 2.2; vec3 n = normalize(vec3((l - lum(uv + vec2(u_texel.x, 0.0))) * k, (l - lum(uv + vec2(0.0, u_texel.y))) * k, 1.0)); n.z *= u_up;
-  o_a = vec4(t.rgb, 0.0); o_n = vec4(n * 0.5 + 0.5, u_up > 0.0 ? texelFetch(u_cells, ivec2(v_w / 16.0), 0).g : 0.0);
+  vec2 uv = v_w / u_world; if (texture(u_tex, uv).a < 0.5) discard;
+  vec3 D = normalize(vec3(v_w, u_height) - vec3(u_eye.xy, u_eye.w)); float deep = 0.55, steps = 10.0, dz = max(abs(D.z), 0.22);
+  vec2 stp = D.xy / dz * (deep / steps) / u_world; float d = 0.0;
+  for (int i = 0; i < 10; i++) { vec2 q = uv + stp; if (texture(u_tex, q).a < 0.5 || d + deep / steps > (1.0 - lum(q)) * deep) break; uv = q; d += deep / steps; }
+  vec4 t = texture(u_tex, uv);
+  float l = lum(uv), k = 2.6; vec3 n = normalize(vec3((l - lum(uv + vec2(u_texel.x, 0.0))) * k, (l - lum(uv + vec2(0.0, u_texel.y))) * k, 1.0)); n.z *= u_up;
+  o_a = vec4(t.rgb * (1.0 - d * 0.5), 0.0); o_n = vec4(n * 0.5 + 0.5, u_up > 0.0 ? texelFetch(u_cells, ivec2(v_w / 16.0), 0).g : 0.0);
 }`);
   const FULL = `out vec2 v; void main() { v = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(v * 2.0 - 1.0, 0.0, 1.0); }`;
   const lightP = prog(FULL, `in vec2 v; out vec4 o;
-uniform sampler2D u_a, u_n, u_d, u_lm, u_cells; uniform vec4 u_eye, u_proj, u_fog; uniform float u_world, u_far, u_sky, u_time; uniform vec2 u_grid;
+uniform sampler2D u_a, u_n, u_d, u_lm, u_cells, u_prev; uniform vec4 u_eye, u_proj, u_fog; uniform float u_world, u_far, u_sky, u_time, u_fast; uniform vec2 u_grid;
 uniform vec4 u_lp[${MAXL}], u_lc[${MAXL}], u_occ[${MAXO}]; uniform int u_nl, u_no;
 float fwdOf(float z) { if (z < 0.1) z *= 10.0;                       // the weapon in hand is drawn into the front tenth of the depth range
   float A = (u_proj.w + u_proj.z) / (u_proj.w - u_proj.z), B = 2.0 * u_proj.w * u_proj.z / (u_proj.w - u_proj.z); return B / (A - (z * 2.0 - 1.0)); }
 vec3 worldAt(vec2 uv, float f) { vec2 ndc = uv * 2.0 - 1.0; float c = cos(u_eye.z), s = sin(u_eye.z); return vec3(u_eye.xy + f * vec2(c, s) + ndc.x * f / u_proj.x * vec2(-s, c), u_eye.w + ndc.y * f / u_proj.y); }
+vec3 screenOf(vec3 p) { vec2 d = p.xy - u_eye.xy; float c = cos(u_eye.z), s = sin(u_eye.z), f = d.x * c + d.y * s; return vec3(vec2((d.y * c - d.x * s) * u_proj.x, (p.z - u_eye.w) * u_proj.y) / max(f, 0.01) * 0.5 + 0.5, f); }
 float solid(vec2 cell) { return cell.x < 0.0 || cell.y < 0.0 || cell.x >= u_grid.x || cell.y >= u_grid.y ? 1.0 : texelFetch(u_cells, ivec2(cell), 0).r; }
 float wall(vec2 p, vec2 l) {                                          // walk the level grid from the pixel to the lamp: any wall cell on the way is shadow
   vec2 d = l - p; float len = length(d); if (len < 0.01) return 1.0;
@@ -81,18 +88,31 @@ float bodies(vec3 p, vec3 l) {                                        // enemies
   return s;
 }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+vec3 skyAt(vec2 uv) {                                                 // dusk over Paris: a gradient, stars, a skyline of roofs with lit windows, and the tower
+  float e = (uv.y * 2.0 - 1.0) / u_proj.y, az = u_eye.z + atan((uv.x * 2.0 - 1.0) / u_proj.x);
+  vec3 sky = mix(vec3(1.0, 0.52, 0.34), vec3(0.17, 0.13, 0.36), smoothstep(-0.02, 0.6, e)) + step(0.9985, hash(floor(uv * vec2(420.0, 260.0)))) * smoothstep(0.15, 0.6, e) * 0.9;
+  float b = floor(az * 46.0), roof = 0.045 + 0.085 * hash(vec2(b, 3.0)) + 0.03 * step(0.7, hash(vec2(b, 9.0)));
+  float t = abs(mod(az + 1.5708 + 3.1416, 6.2832) - 3.1416), tower = 0.5 * (1.0 - smoothstep(0.0, 0.085, t + 0.002) ) ;   // due north
+  tower = e < 0.5 && t < 0.006 + 0.075 * pow(max(0.0, 1.0 - e / 0.5), 3.2) ? 1.0 : 0.0;
+  if (e < roof) { vec2 w = floor(vec2(az * 230.0, e * 150.0)); return mix(vec3(0.07, 0.06, 0.14), vec3(1.0, 0.8, 0.45), step(0.9, hash(w)) * step(0.02, e)); }
+  if (tower > 0.5) return mix(vec3(0.09, 0.07, 0.15), vec3(1.0, 0.75, 0.4), step(0.94, hash(floor(vec2(az * 400.0, e * 90.0)))) * 0.8);
+  return sky;
+}
 void main() {
   float z = texture(u_d, v).r; vec3 O = vec3(u_eye.xy, u_eye.w);
-  if (z >= 1.0) { float h = v.y * 2.0 - 1.0; vec3 sky = mix(vec3(0.95, 0.5, 0.36), vec3(0.2, 0.15, 0.38), smoothstep(-0.05, 0.75, h)) + step(0.9985, hash(floor(v * vec2(420.0, 260.0)))) * smoothstep(0.2, 0.8, h) * 0.8;
-    o = vec4(mix(vec3(0.03, 0.028, 0.04), sky, u_sky), 1.0); return; }
+  if (z >= 1.0) { o = vec4(mix(vec3(0.03, 0.028, 0.04), skyAt(v), u_sky), 1.0); return; }
   float f = fwdOf(z); vec3 P = worldAt(v, f); vec4 A = texture(u_a, v), N = texture(u_n, v); vec3 n = normalize(N.xyz * 2.0 - 1.0), V = normalize(O - P);
   float occ = 0.0, rot = hash(v * 931.0) * 6.283;                     // ambient occlusion from the neighbouring pixels' positions
   for (int i = 0; i < 8; i++) { float a = rot + float(i) * 0.785, r = (0.35 + 0.65 * fract(float(i) * 0.618)) * 2.2; vec2 uv = v + vec2(cos(a) * u_proj.x, sin(a) * u_proj.y) * r / f * 0.5;
     vec3 q = worldAt(uv, fwdOf(texture(u_d, uv).r)) - P; float d2 = dot(q, q); occ += max(dot(n, q) / sqrt(d2 + 1e-4) - 0.12, 0.0) / (1.0 + d2 * 0.12); }
-  float ao = 1.0 - min(occ / 8.0 * 2.2, 0.75);
-  vec3 diff = vec3(0.0), spec = vec3(0.0), glow = vec3(0.0), D = -V; float T = length(P - O);
+  float ao = 1.0 - min(occ / 8.0 * 2.4, 0.8);
+  vec3 diff = vec3(0.0), spec = vec3(0.0), glow = vec3(0.0), D = -V; float T = length(P - O), jit = hash(v * 517.0 + u_time);
   for (int i = 0; i < ${MAXL}; i++) { if (i >= u_nl) break; vec4 L = u_lp[i]; vec3 lc = u_lc[i].rgb;
-    if (u_lc[i].a > 0.0) { vec3 q = O - L.xyz; float b = dot(D, q), s = sqrt(max(dot(q, q) - b * b, 30.0)); glow += lc * (atan((T + b) / s) - atan(b / s)) / s * u_lc[i].a; }   // light scattered in the air between the eye and the surface
+    if (u_lc[i].a > 0.0 && u_fast < 0.5) {                             // light in the air: march the view ray and gather what each point receives, so beams are cut off by walls
+      float reach = min(T, 170.0), sum = 0.0;
+      for (int k = 0; k < 5; k++) { vec3 S = O + D * reach * (float(k) + jit) / 5.0; float dl = length(L.xyz - S); if (dl < L.w) sum += pow(1.0 - dl / L.w, 2.0) * wall(S.xy, L.xy); }
+      glow += lc * sum * reach / 5.0 * 0.0034 * u_lc[i].a;
+    }
     vec3 d = L.xyz - P; float dist = length(d); if (dist > L.w) continue;
     vec3 ld = d / dist; float ndl = dot(n, ld) * 0.8 + 0.2; if (ndl <= 0.0) continue;
     vec2 from = P.xy + n.xy * 1.4, side = vec2(-ld.y, ld.x) * 2.5; float sh = 0.5 * (wall(from, L.xy + side) + wall(from, L.xy - side)); if (sh <= 0.0) continue;
@@ -101,6 +121,13 @@ void main() {
   }
   vec3 amb = texture(u_lm, P.xy / u_world).rgb;
   vec3 c = A.rgb * (amb * ao + diff * mix(1.0, ao, 0.5)) + spec * N.a * 0.9;
+  if (u_fast < 0.5 && N.a > 0.3 && n.z > 0.6) {                                        // polished floors mirror the room: follow the reflected ray across the last frame until it meets something
+    vec3 Rr = reflect(D, normalize(mix(vec3(0.0, 0.0, 1.0), n, 0.35))); float hit = 0.0; vec2 huv = v;
+    for (int i = 1; i <= 10; i++) { vec3 sp = screenOf(P + Rr * (float(i) + jit) * 3.4); if (sp.z < u_proj.z || sp.x < 0.0 || sp.x > 1.0 || sp.y < 0.0 || sp.y > 1.0) break;
+      float sf = fwdOf(texture(u_d, sp.xy).r); if (sf < sp.z - 0.6 && sf > sp.z - 9.0) { hit = 1.0; huv = sp.xy; break; } }
+    float edge = min(min(huv.x, 1.0 - huv.x), min(huv.y, 1.0 - huv.y));
+    c += texture(u_prev, huv).rgb * hit * N.a * (0.12 + 0.6 * pow(1.0 - max(dot(V, n), 0.0), 3.0)) * smoothstep(0.0, 0.08, edge);
+  }
   c = mix(c, A.rgb * 2.4, A.a);                                        // glowing voxels ignore the light and feed the bloom
   c = mix(c, u_fog.rgb, clamp((T - u_fog.a) / (u_far - u_fog.a), 0.0, 1.0) * 0.85) + glow;
   o = vec4(c, 1.0);
@@ -112,20 +139,39 @@ void main() { float A = (u_proj.w + u_proj.z) / (u_proj.w - u_proj.z), B = 2.0 *
   vec2 g = floor(v_q * 7.0) / 7.0; float a = smoothstep(0.5, 0.18, length(g)) * v_c.a * clamp((scene - v_f) / 3.0, 0.0, 1.0); if (a < 0.01) discard; o = vec4(v_c.rgb, a); }`);   // blocky puffs that fade where they meet a surface
   const downP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex; uniform vec2 u_texel; uniform float u_cut;
 void main() { vec3 c = vec3(0.0); for (int i = 0; i < 4; i++) c += texture(u_tex, v + (vec2(float(i & 1), float(i >> 1)) * 2.0 - 1.0) * u_texel).rgb; c *= 0.25; o = vec4(max(c - u_cut, 0.0), 1.0); }`);
-  const finalP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex, u_b0, u_b1, u_b2, u_b3; uniform float u_time, u_pain;
+  // exposure: one pixel that drifts towards whatever makes the average of the frame a comfortable brightness
+  const exposeP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex, u_old;
+void main() { float l = dot(textureLod(u_tex, vec2(0.5), 20.0).rgb, vec3(0.3, 0.59, 0.11)), want = clamp(0.36 / (l + 0.04), 0.6, 2.2), old = texture(u_old, vec2(0.5)).r; o = vec4(old < 0.01 ? want : mix(old, want, 0.04)); }`);
+  const finalP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex, u_b0, u_b1, u_b2, u_b3, u_exp; uniform float u_time, u_pain; uniform vec4 u_grade;   // grade: tint r, g, b and contrast
 void main() {
   vec3 c = texture(u_tex, v).rgb + texture(u_b0, v).rgb * 0.5 + texture(u_b1, v).rgb * 0.5 + texture(u_b2, v).rgb * 0.45 + texture(u_b3, v).rgb * 0.4;
+  c *= texture(u_exp, vec2(0.5)).r;
   c = mix(c, 0.8 + (1.0 - exp(-(c - 0.8) * 2.2)) * 0.22, step(0.8, c));   // roll the highlights off instead of clipping them
-  vec2 q = v - 0.5; c *= 1.0 - dot(q, q) * 0.55;                         // vignette
-  c = pow(c, vec3(0.96)) * vec3(1.03, 1.0, 0.96);                        // a slightly warm grade
+  c = (c - 0.5) * u_grade.a + 0.5; c *= u_grade.rgb;                     // each part of the level has its own grade
+  vec2 q = v - 0.5; c *= 1.0 - dot(q, q) * 0.6;                         // vignette
   c += (fract(sin(dot(v * 913.0 + u_time, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.018;
-  o = vec4(mix(c, vec3(0.7, 0.0, 0.0), u_pain * dot(q, q) * 2.4), 1.0);
+  o = vec4(mix(max(c, 0.0), vec3(0.7, 0.0, 0.0), u_pain * dot(q, q) * 2.4), 1.0);
+}`);
+  // anti-aliasing on the finished picture (FXAA): soften only along edges
+  const fxaaP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex; uniform vec2 u_texel;
+float lu(vec2 uv) { return dot(texture(u_tex, uv).rgb, vec3(0.3, 0.59, 0.11)); }
+void main() {
+  float m = lu(v), nw = lu(v + vec2(-1.0, 1.0) * u_texel), ne = lu(v + vec2(1.0, 1.0) * u_texel), sw = lu(v + vec2(-1.0, -1.0) * u_texel), se = lu(v + vec2(1.0, -1.0) * u_texel);
+  float lo = min(m, min(min(nw, ne), min(sw, se))), hi = max(m, max(max(nw, ne), max(sw, se)));
+  vec2 dir = vec2(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se)); float rd = 1.0 / (min(abs(dir.x), abs(dir.y)) + max((nw + ne + sw + se) * 0.03125, 0.0078));
+  dir = clamp(dir * rd, -8.0, 8.0) * u_texel;
+  vec3 a = 0.5 * (texture(u_tex, v + dir * (1.0 / 3.0 - 0.5)).rgb + texture(u_tex, v + dir * (2.0 / 3.0 - 0.5)).rgb), b = a * 0.5 + 0.25 * (texture(u_tex, v - dir * 0.5).rgb + texture(u_tex, v + dir * 0.5).rgb);
+  float lb = dot(b, vec3(0.3, 0.59, 0.11)); o = vec4(lb < lo || lb > hi ? a : b, 1.0);
 }`);
 
   // ---- targets ----
   const gA = tex(W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST), gN = tex(W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST), gD = tex(W, H, gl.DEPTH_COMPONENT24, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, gl.NEAREST);
   const gF = fbo(gA, gN); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, gD, 0); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
-  const lit = colour(W, H), litF = fbo(lit), bloom = [];
+  const mipped = t => { gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.generateMipmap(gl.TEXTURE_2D); return t; };
+  const lits = [0, 1].map(() => { const t = mipped(colour(W, H)); return { t, f: fbo(t) }; }), bloom = [];   // this frame and the last one: reflections read the previous frame
+  const exps = [0, 1].map(() => { const t = colour(1, 1); return { t, f: fbo(t) }; }), ldr = tex(W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.LINEAR), ldrF = fbo(ldr);
+  for (const e of exps) { gl.bindFramebuffer(gl.FRAMEBUFFER, e.f); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
+  let flip = 0;
   for (let i = 1, w = W, h = H; i <= 5; i++) { w = Math.max(2, w >> 1); h = Math.max(2, h >> 1); const t = colour(w, h); bloom.push({ t, f: fbo(t), w, h }); }
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   const cellsT = tex(GW, GH, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST); let lmT = null;
@@ -160,7 +206,7 @@ void main() {
   const full = () => { gl.bindVertexArray(null); gl.drawArrays(gl.TRIANGLES, 0, 3); };
 
   return {
-    stats: { draws: 0, tris: 0 }, hdr,
+    stats: { draws: 0, tris: 0 }, hdr, fast: false,                 // fast: skip the light beams and floor reflections
     free(m) { const e = meshes.get(m); if (e) { gl.deleteBuffer(e.buf); gl.deleteVertexArray(e.vao); meshes.delete(m); } },   // for a mesh that has been rebuilt
     setCells(rgba) { gl.bindTexture(gl.TEXTURE_2D, cellsT); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, GW, GH, gl.RGBA, gl.UNSIGNED_BYTE, rgba); },   // r: blocks light, g: how shiny the floor is
     setLightMap(rgb, n) { lmT = lmT || tex(n, n, gl.RGB8, gl.RGB, gl.UNSIGNED_BYTE, gl.LINEAR); gl.bindTexture(gl.TEXTURE_2D, lmT); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, n, n, gl.RGB, gl.UNSIGNED_BYTE, rgb); },
@@ -188,24 +234,31 @@ void main() {
     },
     // light the frame and put it on screen. lights: [x, y, z, radius, r, g, b, air glow]; bodies: [x, y, radius, height]; smoke: x, y, z, size, r, g, b, alpha
     end(o) {
+      const lit = lits[flip].t, prev = lits[1 - flip].t, ex = exps[flip], exOld = exps[1 - flip];
       gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, litF); gl.viewport(0, 0, W, H);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, lits[flip].f); gl.viewport(0, 0, W, H);
       const u = lightP.u, nl = Math.min(MAXL, o.lights.length), no = Math.min(MAXO, o.bodies.length), lp = new Float32Array(MAXL * 4), lc = new Float32Array(MAXL * 4), oc = new Float32Array(MAXO * 4);
       for (let i = 0; i < nl; i++) { lp.set(o.lights[i].slice(0, 4), i * 4); lc.set(o.lights[i].slice(4, 8), i * 4); }
       for (let i = 0; i < no; i++) oc.set(o.bodies[i], i * 4);
-      gl.useProgram(lightP.p); camera(u); bind(0, gA, u.u_a); bind(1, gN, u.u_n); bind(2, gD, u.u_d); bind(3, lmT, u.u_lm); bind(4, cellsT, u.u_cells);
+      gl.useProgram(lightP.p); camera(u); bind(0, gA, u.u_a); bind(1, gN, u.u_n); bind(2, gD, u.u_d); bind(3, lmT, u.u_lm); bind(4, cellsT, u.u_cells); bind(5, prev, u.u_prev);
       gl.uniform4fv(u.u_lp, lp); gl.uniform4fv(u.u_lc, lc); gl.uniform4fv(u.u_occ, oc); gl.uniform1i(u.u_nl, nl); gl.uniform1i(u.u_no, no);
-      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform1f(u.u_time, o.time);
+      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0);
       full();
       if (o.smokeCount) {                                            // smoke sits in front of the lit scene and fades against it
         const s = smokeP.u; gl.useProgram(smokeP.p); camera(s); bind(2, gD, s.u_d); gl.uniform2f(s.u_size, W, H); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.bindVertexArray(quad.vao); gl.bindBuffer(gl.ARRAY_BUFFER, quad.ib); gl.bufferData(gl.ARRAY_BUFFER, o.smoke.subarray(0, o.smokeCount * 8), gl.DYNAMIC_DRAW); gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, o.smokeCount); gl.disable(gl.BLEND);
       }
+      gl.bindTexture(gl.TEXTURE_2D, lit); gl.generateMipmap(gl.TEXTURE_2D);                               // its smallest level is the average brightness of the frame
+      gl.useProgram(exposeP.p); gl.bindFramebuffer(gl.FRAMEBUFFER, ex.f); gl.viewport(0, 0, 1, 1); bind(0, lit, exposeP.u.u_tex); bind(1, exOld.t, exposeP.u.u_old); full();
       gl.useProgram(downP.p);                                        // bloom: keep what is brighter than white, and blur it at five scales
       bloom.forEach((b, i) => { gl.bindFramebuffer(gl.FRAMEBUFFER, b.f); gl.viewport(0, 0, b.w, b.h); bind(0, i ? bloom[i - 1].t : lit, downP.u.u_tex); gl.uniform2f(downP.u.u_texel, 1 / (i ? bloom[i - 1].w : W), 1 / (i ? bloom[i - 1].h : H)); gl.uniform1f(downP.u.u_cut, i ? 0 : 1); full(); });
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height);
-      const f = finalP.u; gl.useProgram(finalP.p); bind(0, lit, f.u_tex); bind(1, bloom[1].t, f.u_b0); bind(2, bloom[2].t, f.u_b1); bind(3, bloom[3].t, f.u_b2); bind(4, bloom[4].t, f.u_b3); gl.uniform1f(f.u_time, o.time % 10); gl.uniform1f(f.u_pain, o.pain || 0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, ldrF); gl.viewport(0, 0, W, H);
+      const f = finalP.u, g = o.grade || [1, 1, 1, 1]; gl.useProgram(finalP.p); bind(0, lit, f.u_tex); bind(1, bloom[1].t, f.u_b0); bind(2, bloom[2].t, f.u_b1); bind(3, bloom[3].t, f.u_b2); bind(4, bloom[4].t, f.u_b3); bind(5, ex.t, f.u_exp);
+      gl.uniform1f(f.u_time, o.time % 10); gl.uniform1f(f.u_pain, o.pain || 0); gl.uniform4f(f.u_grade, g[0], g[1], g[2], g[3]);
       full();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.useProgram(fxaaP.p); bind(0, ldr, fxaaP.u.u_tex); gl.uniform2f(fxaaP.u.u_texel, 1 / W, 1 / H); full();
+      flip = 1 - flip;
     },
   };
 }
