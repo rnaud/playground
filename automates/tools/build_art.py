@@ -47,7 +47,7 @@ def shrink(im, size):     # area-average down to voxel resolution, keeping a har
             px[x, y] = (min(255, r * 255 // a), min(255, g * 255 // a), min(255, b * 255 // a), 255) if a >= 128 else (0, 0, 0, 0)
     return small
 
-def components(im, expect, k=8, grow=1):   # split a keyed sheet into its objects, left to right; a tighter grid for sheets whose objects nearly touch
+def components(im, expect, k=8, grow=1, rows=1):   # split a keyed sheet into its objects, left to right; a tighter grid for sheets whose objects nearly touch
     m = im.getchannel('A').resize((im.width // k, im.height // k), Image.BOX).point(lambda v: 255 if v > 40 else 0)
     w, h = m.size
     src = m.load()
@@ -72,7 +72,7 @@ def components(im, expect, k=8, grow=1):   # split a keyed sheet into its object
                     if 0 <= nx < w and 0 <= ny < h and grown[ny][nx] and not seen[ny][nx]:
                         seen[ny][nx] = True; stack.append((nx, ny))
             if n > 40: boxes.append((x0 * k, y0 * k, min(im.width, (x1 + 1) * k), min(im.height, (y1 + 1) * k)))
-    boxes.sort(key=lambda b: b[0])
+    boxes.sort(key=lambda b: (rows > 1 and (b[1] + b[3]) > im.height, b[0]))      # a sheet in two rows reads top row first
     if len(boxes) != expect: print(f'  expected {expect} objects, found {len(boxes)}: {boxes}', file=sys.stderr)
     out = []
     for b in boxes:
@@ -119,12 +119,12 @@ for t, f in WALLS.items():
     if im: bases[t] = flat(shrink(im, WALL)); add('wall_' + t, bases[t])
 # (sheet, [objects left to right]); each object: (wall type it makes, base it sits on, width in voxels, bottom edge in voxels above the floor)
 DECALS = [
-    ('decals-metro', [('P', 'M', 26, 24), ('N', 'M', 52, 46), ('L', 'M', 22, 44)]),
+    ('decals-metro', [('P', 'M', 26, 14), ('N', 'M', 52, 46), ('L', 'M', 22, 44)]),            # (nothing on a Metro wall may reach above 74: the platform's vault springs from there)
     ('decals-chateau', [('F', 'W', 50, 36), ('V', 'B', 46, 4), ('X', 'S', 56, 14)]),
     ('decals-workshop', [('G', 'I', 40, 8), ('T', 'I', 22, 20), ('Y', 'I', 40, 40)]),
     # the second set: four fixtures a sheet, so that most stretches of wall carry something
-    ('decals-metro2', [('0', 'M', 26, 30), ('1', 'M', 50, 40), ('2', 'M', 28, 54), ('3', 'M', 34, 26)]),
-    ('decals-metro3', [('4', 'M', 48, 14), ('5', 'M', 40, 58), ('6', 'M', 34, 24), ('7', 'M', 26, 30)]),
+    ('decals-metro2', [('0', 'M', 26, 14), ('1', 'M', 50, 34), ('2', 'M', 28, 38), ('3', 'M', 34, 20)]),
+    ('decals-metro3', [('4', 'M', 44, 6), ('5', 'M', 40, 52), ('6', 'M', 30, 6), ('7', 'M', 26, 26)]),
     ('decals-catacombs', [('8', 'C', 40, 30), ('9', 'C', 36, 28), ('A', 'C', 56, 0), ('E', 'C', 46, 28)]),
     ('decals-cellar', [('J', 'B', 54, 4), ('O', 'B', 34, 30), ('Q', 'B', 44, 34), ('R', 'B', 44, 26)]),
     ('decals-chateau2', [('Z', 'W', 48, 0), ('a', 'W', 28, 10), ('d', 'W', 56, 0), ('e', 'W', 44, 32)]),
@@ -137,11 +137,10 @@ for sheet, objs in DECALS:
     if not im: continue
     for (t, base, wv, bottom), c in zip(objs, components(key(im), len(objs))):
         if base not in bases: continue
-        d = fit(c, width=wv * K)
+        d = flat(fit(c, width=wv * K))                                 # only the fixture is reduced to a palette: the wall round it stays exactly the plain wall, so the game can tell the two apart
         ox, oy = (WALL[0] - d.width) // 2, max(0, WALL[1] - bottom * K - d.height)
         tile = bases[base].copy()
         tile.alpha_composite(d, (ox, oy))
-        tile = flat(tile)
         if t in LIT:                                                  # mark the glow after pasting: compositing would flatten the alpha
             lit, dp, tp = glow(d.copy(), LIT[t]).load(), d.load(), tile.load()
             for y in range(d.height):
@@ -165,6 +164,13 @@ for n, src in [('metro', 'ceil-metro'), ('stone', 'wall-stone'), ('brick', 'wall
     im = load(src)
     if im: add('ceil_' + n, flat(shrink(im.crop((0, 0, im.width, im.width)), (FLOOR, FLOOR)), 48))
 
+# ---- things lying on the floor, seen from above: (sheet, [(name, width in voxels)]), two rows of three ----
+for sheet, objs in [('clutter1', [('paper', 44), ('manhole', 40), ('drain', 28), ('boneheap', 48), ('spill', 44), ('straw', 56)]),
+                    ('clutter2', [('rug', 104), ('rug2', 88), ('leaves', 56), ('oil', 48), ('plans', 52), ('cable', 40)])]:
+    im = load(sheet)
+    if not im: continue
+    for (name, wv), c in zip(objs, components(key(im), len(objs), 8, 3, rows=2)): add('flat_' + name, flat(fit(c, width=wv)))
+
 # ---- objects: (sheet, [(name, height in voxels)]) ----
 SHEETS = [
     ('enemies', [('automate', 68), ('scaphandre', 80), ('colosse', 95), ('lanterne', 30)]),
@@ -178,9 +184,11 @@ SHEETS = [
     ('props-under', [('bones', 20), ('candles', 24), ('barrow', 26), ('bottles', 22), ('sacks', 26)]),
     ('props-chateau', [('armchair', 46), ('globe', 52), ('armour', 84), ('clock', 92), ('palm', 72)]),
     ('props-workshop', [('coil', 88), ('anvil', 34), ('repair', 84), ('urn', 60), ('statue', 100)]),
+    ('hang1', [('hsign', 44), ('hclock', 44), ('ring', 40), ('hams', 40), ('hoist', 52)]),
+    ('hang2', [('pipes', 36), ('fan', 20), ('parts', 46), ('roots', 22), ('banner', 60)]),
     ('train', [('train', 46)]),
 ]
-SHINE = {'coil': 'cyan', 'candles': 'warm yellow', 'sauteur': 'red orange', 'garde': 'cyan', 'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
+SHINE = {'ring': 'warm yellow', 'coil': 'cyan', 'candles': 'warm yellow', 'sauteur': 'red orange', 'garde': 'cyan', 'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
          'lamp': 'warm', 'table': 'warm', 'chandelier': 'warm', 'train': 'warm yellow', 'hanglamp': 'warm', 'lantern': 'warm yellow', 'signal': 'red'}
 for sheet, objs in SHEETS:
     im = load(sheet)

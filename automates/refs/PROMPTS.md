@@ -91,3 +91,14 @@ Eleven more 16:9 sheets, same model and settings, each prompt opening with "Flat
 | `props-under` | heap of skulls and bones, stone block with lit candles, wheelbarrow of rubble, crate of wine bottles, pile of sacks |
 | `props-chateau` | crimson wingback armchair, globe on a stand, suit of armour with a halberd, grandfather clock, potted palm in a brass urn |
 | `props-workshop` | Tesla coil with a cyan sphere, anvil on a stump, half-built automaton on a repair stand, stone urn of geraniums, marble statue on a pedestal |
+
+## Third set: floors and ceilings (2026-11-23)
+
+Four more 16:9 sheets. The floor sheets ask for "six separate flat things lying on a floor, each seen from directly above (top-down orthographic, zero perspective), arranged in two rows of three with very wide gaps"; the ceiling sheets for "five separate objects that hang from a ceiling, in a single row", front view.
+
+| File | Objects |
+| --- | --- |
+| `clutter1` | newspaper sheets, iron manhole cover, brass drain grate; bones and skulls, broken bottle in spilled wine, straw |
+| `clutter2` | Persian rug, round Art Deco rug, autumn leaves; oil stain with a wrench, blueprint sheets, coiled cable |
+| `hang1` | station arrow sign on two chains, double-faced station clock, iron ring of candles, rail of ham, sausages and garlic, chain hoist |
+| `hang2` | run of brass pipes with a valve wheel, ceiling fan, rail of automaton parts, hanging tree roots, crimson banner with a cog emblem |

@@ -23,6 +23,8 @@
   #boss u { display:block; height:100%; width:100%; background:linear-gradient(#ff6a3a,#b3241a); }
   #boss::after { content:'LE COLOSSE'; position:absolute; left:0; right:0; top:15px; text-align:center; font-size:11px; letter-spacing:4px; color:#ffcf5c; text-shadow:0 1px 0 #000; }
   #bar small b { color:#ffcf5c; }
+  #tag { left:0; right:0; top:calc(50% + 34px); text-align:center; opacity:0; transition:opacity .12s; font-size:clamp(11px,1.5vw,15px); letter-spacing:3px; text-shadow:0 1px 0 #000, 0 0 8px #000; z-index:2; }
+  #tag i { display:block; width:86px; height:4px; margin:4px auto 0; background:rgba(0,0,0,.55); border:1px solid rgba(0,0,0,.8); } #tag u { display:block; height:100%; }
   #cap { left:0; right:0; bottom:13vh; text-align:center; color:#ffe9a0; font-size:clamp(15px,2.6vw,26px); letter-spacing:5px; text-shadow:0 2px 0 #000, 0 0 12px #000; z-index:2; }
   /* the title and the opening: no status bar, letterbox bars, and the level showing through behind the words */
   .cine #bar, .cine #cross, .cine #touch, .cine #log, .cine #fps, .cine #stats { display:none; }
@@ -61,6 +63,7 @@
 <div id="dmg" class="ov"><i></i><i></i><i></i><i></i></div>
 <span id="log" class="ov"></span>
 <div id="cap" class="ov"></div>
+<div id="tag" class="ov"></div>
 <span id="pain" class="ov"></span>
 <div id="bar">
   <div><span id="ammo">0</span><small>MUNITIONS &middot; GRENADES <b id="nades">0</b></small></div>

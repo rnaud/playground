@@ -43,11 +43,11 @@ vec4 project(vec3 w) { vec2 d = w.xy - u_eye.xy; float c = cos(u_eye.z), s = sin
   return vec4((d.y * c - d.x * s) * u_proj.x + u_view.y * f, (w.z - u_eye.w - u_view.x * f) * u_proj.y + u_view.z * f, (f * (u_proj.w + u_proj.z) - 2.0 * u_proj.w * u_proj.z) / (u_proj.w - u_proj.z), f); }\n`;
   const GOUT = `layout(location = 0) out vec4 o_a; layout(location = 1) out vec4 o_n;\n`;
   const meshP = prog(CAM + `layout(location = 0) in vec3 a_pos; layout(location = 1) in float a_layer; layout(location = 2) in vec3 a_color; layout(location = 3) in vec3 a_normal;
-uniform mat4 u_model; uniform float u_vox, u_flash; out vec3 v_color, v_normal; out vec2 v_mat;
+uniform mat4 u_model; uniform float u_vox, u_flash; uniform vec4 u_tint; out vec3 v_color, v_normal; out vec2 v_mat;
 void main() {
   vec4 w = u_model * vec4(vec3(a_pos.xy, a_layer + a_pos.z) * u_vox, 1.0); gl_Position = project(w.xyz);
   v_mat = vec2(step(1.5, a_color.r), step(1.5, a_color.g));
-  v_color = mix(a_color - vec3(2.0 * v_mat.x, 2.0 * v_mat.y, 0.0), vec3(1.0), u_flash); v_normal = mat3(u_model) * a_normal;
+  v_color = mix((a_color - vec3(2.0 * v_mat.x, 2.0 * v_mat.y, 0.0)) * mix(u_tint.rgb, vec3(1.0), v_mat.x), vec3(1.0), u_flash); v_mat.x = max(v_mat.x, u_tint.a); v_normal = mat3(u_model) * a_normal;   // a tint for the paint (not for what glows), and a little light of its own so a machine never sinks into the background
 }`, GOUT + `in vec3 v_color, v_normal; in vec2 v_mat;
 void main() { o_a = vec4(v_color, v_mat.x); o_n = vec4(normalize(v_normal) * 0.5 + 0.5, v_mat.y); }`);
   const cubeP = prog(CAM + `layout(location = 0) in vec3 a_c; layout(location = 1) in vec3 a_n; layout(location = 2) in vec4 i_p; layout(location = 3) in vec4 i_c;
@@ -196,7 +196,7 @@ void main() {
   const halton = (i, b) => { let f = 1, x = 0; while (i > 0) { f /= b; x += f * (i % b); i = Math.floor(i / b); } return x; };
   for (let i = 1, w = W, h = H; i <= 5; i++) { w = Math.max(2, w >> 1); h = Math.max(2, h >> 1); const t = colour(w, h); bloom.push({ t, f: fbo(t), w, h }); }
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  const cellsT = tex(GW, GH, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST); let lmT = null, fmT = null;
+  const cellsT = tex(GW, GH, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST); let lmT = null, fmT = null; const tintV = new Float32Array([1, 1, 1, 0]);
   const groundB = gl.createBuffer(), groundV = gl.createVertexArray();
   gl.bindVertexArray(groundV); gl.bindBuffer(gl.ARRAY_BUFFER, groundB); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, world, 0, world, world, 0, 0, world, world, 0, world]), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
@@ -249,8 +249,9 @@ void main() {
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY, groundT); gl.uniform1i(u.u_tex, 0); bind(1, cellsT, u.u_cells); gl.bindVertexArray(groundV); gl.drawArrays(gl.TRIANGLES, 0, 6); this.stats.draws++;
     },
     front(on) { gl.depthRange(0, on ? 0.1 : 1); },                   // what follows is drawn in front of everything else: the weapon in hand never pokes into a wall
+    tint(r = 1, g = 1, b = 1, self = 0) { tintV[0] = r; tintV[1] = g; tintV[2] = b; tintV[3] = self; },
     draw(m, M, vox, flash) {
-      const u = meshP.u; gl.useProgram(meshP.p); camera(u); gl.uniformMatrix4fv(u.u_model, false, M); gl.uniform1f(u.u_vox, vox); gl.uniform1f(u.u_flash, flash || 0);
+      const u = meshP.u; gl.useProgram(meshP.p); camera(u); gl.uniform4fv(u.u_tint, tintV); gl.uniformMatrix4fv(u.u_model, false, M); gl.uniform1f(u.u_vox, vox); gl.uniform1f(u.u_flash, flash || 0);
       gl.bindVertexArray(vaoFor(m)); gl.drawArrays(gl.TRIANGLES, 0, m.count); this.stats.draws++; this.stats.tris += m.count / 3;
     },
     cubes(data, n) {                                                 // n particles: x, y, z, size, r, g, b, glow

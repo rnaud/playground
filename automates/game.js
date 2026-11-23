@@ -198,11 +198,9 @@ const SPR = {};
 function wallSprite(t, mir) {
   const key = t + (mir ? '~' : ''); if (SPR[key]) return SPR[key];
   const h0 = 192, add = HV - h0, s = sprite(ART.rects['wall_' + t] ? 'wall_' + t : 'wall_' + (WALL_BASE[t] || t), WV, h0, WALL_FLIP !== !!mir), plain = WALL_BASE[t] && ART.rects['wall_' + t] ? sprite('wall_' + WALL_BASE[t], WV, h0, WALL_FLIP !== !!mir) : s;
-  let cut = 150;
-  if (plain !== s) for (let z = h0 - 1; z > cut - 3; z--) { let diff = 0; for (let x = 0; x < WV; x++) if (s.c[z * WV + x] !== plain.c[z * WV + x]) diff++; if (diff > 12) { cut = z + 3; break; } }
-  if (cut > h0 - 6) return SPR[key] = { ...resize(s, WV, HV), name: 'wall_' + key };                       // decorated to the very top: stretch it instead
-  const c = new Int32Array(WV * HV);
-  for (let z = 0; z < HV; z++) { const src = z >= cut && z < cut + add ? plain.c : s.c, row = z < cut ? z : z < cut + add ? cut - add + z - cut : z - add; for (let x = 0; x < WV; x++) c[z * WV + x] = src[row * WV + x]; }
+  const cut = 150, c = new Int32Array(WV * HV);                                                           // every wall of a material is lengthened at the same height, so courses and stripes run on from one to the next
+  for (let z = 0; z < HV; z++) { const row = z < cut ? z : z < cut + add ? cut - add + z - cut : z - add; for (let x = 0; x < WV; x++) c[z * WV + x] = plain.c[row * WV + x]; }
+  if (plain !== s) for (let z = 0; z < h0; z++) for (let x = 0; x < WV; x++) { const k = s.c[z * WV + x]; if (k !== plain.c[z * WV + x]) c[z * WV + x] = k; }   // what is fixed to the wall keeps its height above the floor
   return SPR[key] = { name: 'wall_' + key, w: WV, h: HV, c };
 }
 const TUNNEL = LEVEL === 1 ? { '1,56': 1, '1,57': 0, '1,58': 1, '1,59': 0, '30,56': 0, '30,57': 1, '30,58': 0, '30,59': 1 } : {};   // which half of the tunnel-mouth picture each end cell of the track shows: two tracks, so two mouths at each end
@@ -462,6 +460,9 @@ box('a_cask', sprite('cask'), 44); lathe('a_table', sprite('table')); box('a_exi
 lathe('a_chandelier', sprite('chandelier')); box('a_arch', sprite('arch', WV + 6, LOWC * VPU), 12); box('a_rack', sprite('rack'), 40); box('a_workbench', sprite('workbench'), 16); box('a_train', sprite('train'), 36);
 for (const [n, depth] of [['kiosk', 26], ['suitcases', 26], ['trolley', 30], ['barrow', 24], ['bottles', 30], ['armchair', 38], ['armour', 14], ['clock', 20], ['anvil', 16], ['repair', 16]]) box('a_' + n, sprite(n), depth);   // the second set of furniture: flat-sided things are extruded,
 for (const n of ['scale', 'morris', 'bones', 'candles', 'sacks', 'globe', 'palm', 'coil', 'urn', 'statue']) lathe('a_' + n, sprite(n));                                                                                    // round ones are turned
+for (const n of ['paper', 'manhole', 'drain', 'boneheap', 'spill', 'straw', 'rug', 'rug2', 'leaves', 'oil', 'plans', 'cable']) { const s = sprite('flat_' + n); model('f_' + n, s.w, s.h, 1, (x, y) => { const k = s.c[y * s.w + x]; return k < 0 ? null : k; }); }   // things lying on the floor: one voxel thick, drawn from above
+for (const [n, depth] of [['hsign', 4], ['hclock', 10], ['hams', 8], ['hoist', 10], ['pipes', 12], ['parts', 8], ['banner', 2]]) box('a_' + n, sprite(n), depth);   // and things that hang from the ceiling
+for (const n of ['ring', 'fan', 'roots']) lathe('a_' + n, sprite(n));
 lathe('a_hang', sprite('hanglamp')); lathe('a_lantern', sprite('lantern')); lathe('a_bin', sprite('bin')); lathe('a_signal', sprite('signal')); box('a_bench', sprite('bench'), 14);
 { const s = sprite('crate'); box('a_crate', s, s.w); }
 // shots, sparks and debris stay simple shapes, at half scale so they sit with the finer models
@@ -496,8 +497,9 @@ if (LEVEL === 1) {
 for (let cx = 2; cx <= 14; cx += 2) FIX.push({ model: 'a_hang', x: cx * DS, y: 28 * DS, hang: (SPRING + RISE) * VOX, z: (SPRING + RISE) * VOX - 6, R: 110, I: .5, col: WARM });
 for (const [cx, cy] of [[7, 4], [8, 7], [2, 8], [8, 14], [5, 12], [11, 9], [4, 2], [10, 4], [13, 8]]) FIX.push({ model: 'a_lantern', ...C(cx, cy), hang: LOWC, z: LOWC - 5, R: 76, I: .85, col: AMBER, flick: 1 });
 for (const [cx, cy] of [[18, 18], [22, 18], [20, 15], [20, 21], [14, 18], [2, 18], [14, 22], [17, 27]]) { const hang = inCellar(cx * K, cy * K) ? 22 : WH - 6; FIX.push({ model: 'a_lantern', ...C(cx, cy), hang, z: hang - 5, R: 84, I: .9, col: AMBER, flick: 1 }); }
-for (const [cx, cy, ox, oy] of [[2, 12, -8, 8], [11, 12, 8, 8], [5, 4, -7, 7], [8, 7, 7, -7], [8, 13, -8, 0], [2, 5, 8, -5], [16, 20, -8, 0], [6, 9, 8, 8]]) FIX.push({ model: 'a_candles', ...C(cx, cy, ox, oy), z: 8, R: 44, I: .55, col: AMBER, flick: 1 });   // candles on blocks of stone
-for (const [cx, cy, ox, oy] of [[26, 18, -7, 0], [33, 18, 7, 0], [26, 22, -7, 0], [33, 22, 7, 0]]) FIX.push({ model: 'a_coil', ...C(cx, cy, ox, oy), z: 20, R: 60, I: .6, col: COLD });   // the Baron's coils
+for (const [cx, cy, ox, oy] of [[2, 12, -4, 4], [11, 12, 4, 4], [5, 4, -4, 4], [8, 7, 4, -4], [8, 13, -4, 0], [2, 5, 4, -4], [16, 20, -4, 0], [6, 9, 4, 4]]) FIX.push({ model: 'a_candles', ...C(cx, cy, ox, oy), z: 8, R: 44, I: .55, col: AMBER, flick: 1 });   // candles on blocks of stone
+for (const [cx, cy, ox, oy] of [[26, 18, -4, 0], [33, 18, 4, 0], [26, 22, -4, 0], [33, 22, 4, 0]]) FIX.push({ model: 'a_coil', ...C(cx, cy, ox, oy), z: 20, R: 60, I: .6, col: COLD });   // the Baron's coils
+for (const [cx, cy, hang] of [[4, 2, LOWC], [6, 8, LOWC], [17, 20, 21], [23, 16, 21], [2, 18, WH - 4]]) FIX.push({ model: 'a_ring', ...C(cx, cy, 2, 2), hang, z: hang - 9, R: 70, I: .6, col: AMBER, flick: 1 });   // rings of candles
 for (const [cx, cy] of [[20, 9], [18, 3], [22, 3]]) FIX.push({ model: 'a_chandelier', ...C(cx, cy), hang: WH, z: WH - 8, R: 120, I: .55, col: WARM });
 for (const [cx, cy, ox] of [[26, 9, -4], [33, 9, 4], [28, 5, 0], [32, 13, 0]]) FIX.push({ model: 'a_lamp', ...C(cx, cy, ox, -5), z: 16, R: 88, I: .85, col: WARM });
 } else for (const [cx, cy] of [[4, 24], [8, 27], [15, 24], [19, 21], [24, 20], [30, 25], [27, 19], [16, 6], [22, 12], [26, 5], [20, 6], [24, 15], [11, 25]]) { const p = C(cx, cy, 4, 4); FIX.push({ model: 'a_lamp', ...p, z: heightAt(p.x, p.y) + 16, R: 95, I: .9, col: WARM }); }   // street lamps along the roofs
@@ -605,6 +607,11 @@ const ENEMY = {
   garde: { hp: 95, speed: 30, r: 6.5, range: 200, rate: 2.3, dmg: 5, shots: 2, shot: 'a_shot', shield: true, score: 1 },          // carries a shield: shots from the front glance off it
   colosse: { hp: 1100, speed: 30, r: 9, range: 300, rate: 1.69, dmg: 7, shots: 5, shot: 'a_shell', boss: true, score: 1 },
 };
+// Telling the machines apart at a glance: each kind wears its own colour (the automate is plain brass and navy), and the same
+// colour marks its name under the crosshair.
+const KIND = { automate: { name: 'AUTOMATE', col: '#d9b24a' }, lanterne: { name: 'LANTERNE', col: '#ff8a3a' }, scaphandre: { name: 'SCAPHANDRIER', col: '#58c08a', tint: [.72, 1.2, .8] },
+  sauteur: { name: 'SAUTEUR', col: '#ff4a4a', tint: [1.3, .6, .55] }, garde: { name: 'GARDE', col: '#5fa8ff', tint: [.62, .84, 1.35] }, colosse: { name: 'LE COLOSSE', col: '#c8c8d8', tint: [.8, .8, .95] } };
+const tintOf = name => { const k = KIND[name.slice(0, name.indexOf('_'))]; return k && k.tint; };
 const WEAPONS = [
   { name: 'PISTOLET', model: 'w_pistol', gun: 'v_pistol', ammo: 'bullets', rate: .30, dmg: 13, pellets: 1, spread: .012, off: [13, 4.3, -1.55] },
   { name: 'FUSIL DE CHASSE', model: 'w_shotgun', gun: 'v_shotgun', ammo: 'shells', rate: .85, dmg: 9, pellets: 8, spread: .1, off: [13, 4.0, -1.75] },
@@ -619,12 +626,12 @@ const ALT = [                                                                  /
   { cost: 8, pellets: 1, dmg: 60, spread: 0, rate: .6, kick: 1.2, chain: 3 },   // Tesla: an arc that jumps on to three more machines
 ];
 const BREAK = { a_cask: 30, a_crate: 18, a_rack: 45, a_bottles: 12, a_suitcases: 16, a_sacks: 22, a_kiosk: 30, a_bones: 8, a_palm: 14, a_urn: 22, a_globe: 14, a_armchair: 28 };                         // furniture that can be shot to pieces, and what it takes
-let enemies, items, decor, shots, fx, debris, brass, P, state, flow, flowT, logLines, stats, freeze = 0, enc = [], darkT = 0, lampT = 0, MAXLAMP = 18;   // enc: the encounters; darkT: how long the lanterns stay out   // brass: spent cases on the floor; freeze: the instant the game holds still on a kill
+let enemies, items, decor, shots, fx, debris, brass, P, state, flow, flowT, logLines, stats, freeze = 0, enc = [], darkT = 0, lampT = 0, MAXLAMP = 18, tagT = 0, fires = [];   // enc: the encounters; darkT: how long the lanterns stay out   // brass: spent cases on the floor; freeze: the instant the game holds still on a kill
 const say = t => { logLines.push({ t, life: 3.2 }); if (logLines.length > 3) logLines.shift(); };
 function reset() {
   enemies = []; items = []; decor = []; shots = []; fx = []; debris = []; brass = []; logLines = []; thingsDirty = true; freeze = 0;
   for (const d of doors) { d.open = 0; d.hold = 0; d.unlocked = !d.key; d.sealed = false; }
-  for (const l of lights) { l.off = false; l.w = l.bw = 0; }
+  for (const l of lights) { l.off = false; l.w = l.bw = 0; } fires = [];
   for (const p of panels) p.smashed = false;
   for (const s of steamers) s.cd = 0;
   darkT = 0; enc = ENC.map(n => ({ ...n, state: 0 })); for (const n of enc) if (n.pre) for (const i of n.seal) doors[i].sealed = true;
@@ -632,7 +639,7 @@ function reset() {
   const E = (type, cx, cy, ox, oy) => { const p = C(cx, cy, ox, oy); enemies.push(mk(type, p.x, p.y)); };
   const I = (kind, cx, cy, ox, oy) => items.push({ kind, ...C(cx, cy, ox, oy) });
   const D = (model, cx, cy, ox = 0, oy = 0, o = {}) => decor.push({ model, ...C(cx, cy, ox, oy), r: 4, solid: true, rot: 0, hp: BREAK[model] || 0, ...o });
-  FIX.forEach((f, i) => { const tall = MODEL_DEFS[f.model].H * VOX, shoot = !!f.hang && f.model !== 'a_hang'; decor.push({ model: f.model, x: f.x, y: f.y, r: f.hang ? 3 : 2, solid: !f.hang, rot: 0, lift: f.hang ? Math.max(f.hang - tall, Math.min(f.hang - 4, 19)) : 0, swing: f.flick ? tall : 0, top: f.hang, light: lights[i], chand: shoot, hp: shoot ? 14 : 0 }); });   // hanging lamps are out of reach but not out of range: a chandelier or a lantern can be shot down
+  FIX.forEach((f, i) => { const tall = MODEL_DEFS[f.model].H * VOX, shoot = !!f.hang && f.model !== 'a_hang'; decor.push({ model: f.model, x: f.x, y: f.y, r: f.hang ? 3 : 2, solid: !f.hang, rot: 0, lift: f.hang ? Math.max(f.hang - tall, Math.min(f.hang - 4, heightAt(f.x, f.y) + 19)) : 0, swing: f.flick ? tall : 0, top: f.hang, light: lights[i], chand: shoot, hp: shoot ? 14 : 0 }); });   // hanging lamps are out of reach but not out of range: a chandelier or a lantern can be shot down
   { const F = (a, b) => isFloor(tile(a, b));                                                              // an arch across the catacomb tunnels, every two cells
     for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) if (tile(cx, cy) === 'c') {
       if ((cy & 1) && !F(cx - 1, cy) && F(cx + 1, cy) && !F(cx + 2, cy) && F(cx, cy - 1) && F(cx, cy + 1) && F(cx + 1, cy - 1) && F(cx + 1, cy + 1)) decor.push({ model: 'a_arch', x: (cx + 1) * CS, y: cy * CS + 8, r: 0, solid: false, rot: 0 });
@@ -646,23 +653,50 @@ function reset() {
   I('shotgun', 2, 17); I('shells', 1, 20); I('shells', 3, 20); E('automate', 2, 19); D('a_crate', 1, 16); D('a_crate', 3, 16, 0, 0, { rot: .4 });
   // what people left behind: the station's furniture, the quarrymen's and the cellarman's clutter, the Baron's house and his workshop
   const Q = Math.PI / 2;
-  D('a_kiosk', 2, 26, 0, -8, { r: 6 }); D('a_scale', 6, 26, 8, -9, { r: 2.5 }); D('a_suitcases', 10, 26, 0, -9, { r: 4 }); D('a_morris', 7, 27, -10, -2, { r: 4.5 }); D('a_trolley', 13, 26, -8, -8, { r: 5 }); D('a_suitcases', 1, 26, -6, 6, { r: 4, rot: .5 });
-  D('a_trolley', 6, 20, 0, 8, { r: 5 }); D('a_suitcases', 10, 17, 4, -8, { r: 4 }); D('a_scale', 11, 19, 9, 0, { r: 2.5, rot: Q }); D('a_sacks', 5, 17, -7, -7, { r: 4 }); D('a_kiosk', 8, 17, 12, -8, { r: 6 });
-  D('a_anvil', 1, 18, -6, 0, { r: 3, rot: Q }); D('a_sacks', 3, 19, 7, 4, { r: 4 }); D('a_barrow', 2, 20, 0, 7, { r: 4 });
-  for (const [x, y, ox, oy] of [[2, 6, -8, 0], [2, 10, 8, 0], [4, 12, 0, 8], [9, 12, 0, -8], [11, 7, 8, 0], [11, 11, -8, 0], [8, 15, 8, 0], [3, 3, -6, 6], [6, 2, 6, -6], [6, 9, -6, 6], [7, 8, 6, -6], [10, 5, 6, 6], [5, 1, 0, -8], [2, 2, -8, -8]]) D('a_bones', x, y, ox, oy, { r: 3, rot: x * 1.7 + y, solid: false });
-  D('a_barrow', 5, 10, -4, 8, { r: 4 }); D('a_barrow', 4, 3, 6, 8, { r: 4, rot: .6 }); D('a_sacks', 7, 10, 8, 8, { r: 4 });
-  D('a_bottles', 17, 17, -6, 0, { r: 4 }); D('a_bottles', 23, 19, 6, 0, { r: 4, rot: Q }); D('a_bottles', 21, 15, 0, -6, { r: 4 }); D('a_sacks', 16, 18, -8, 9, { r: 4 }); D('a_sacks', 24, 16, 7, -6, { r: 4 }); D('a_barrow', 22, 22, 0, 7, { r: 4 }); D('a_sacks', 14, 18, 0, -9, { r: 4 }); D('a_bottles', 19, 20, 8, 8, { r: 4, rot: .4 });
-  for (const [x, y, ox] of [[16, 7, -7], [24, 7, 7], [16, 11, -7], [24, 11, 7]]) D('a_armour', x, y, ox, 0, { r: 3.5, rot: Q });
-  for (const [x, y, ox, oy] of [[16, 6, -8, -8], [24, 6, 8, -8], [16, 12, -8, 8], [24, 12, 8, 8], [19, 4, 8, 8], [21, 1, -8, -8]]) D('a_palm', x, y, ox, oy, { r: 2.5 });
-  D('a_armchair', 17, 10, -4, 4, { r: 5, rot: .5 }); D('a_armchair', 23, 10, 4, 4, { r: 5, rot: -.5 }); D('a_globe', 16, 9, -8, 0, { r: 3 }); D('a_clock', 24, 9, 10, 0, { r: 3, rot: Q });
-  D('a_armchair', 16, 3, -6, 0, { r: 5, rot: Q }); D('a_armchair', 19, 1, 6, -6, { r: 5 }); D('a_globe', 17, 4, 0, 7, { r: 3 }); D('a_clock', 16, 1, -9, -9, { r: 3, rot: Q });
-  D('a_armchair', 22, 2, -6, -2, { r: 5, rot: .3 }); D('a_armchair', 23, 3, 6, 5, { r: 5, rot: -2.4 }); D('a_armour', 24, 2, 8, 0, { r: 3.5, rot: Q }); D('a_clock', 21, 4, -9, 9, { r: 3 }); D('a_globe', 24, 4, 8, 8, { r: 3 });
-  for (const [x, y, ox, oy] of [[27, 10, 0, -8], [29, 8, 0, 8], [32, 10, 0, -8], [31, 13, -9, 0], [29, 13, 9, 0], [27, 8, 0, 8]]) D('a_urn', x, y, ox, oy, { r: 3 });
-  for (const [x, y, ox, oy] of [[26, 6, -6, 0], [33, 8, 6, 0], [29, 12, -4, 0], [33, 13, 6, 6], [30, 5, 0, -6]]) D('a_statue', x, y, ox, oy, { r: 3.5 });
-  D('a_repair', 28, 16, 0, -8, { r: 4 }); D('a_repair', 32, 16, 0, -8, { r: 4 }); D('a_repair', 29, 24, 8, 8, { r: 4 }); D('a_anvil', 27, 20, -6, 0, { r: 3, rot: Q }); D('a_anvil', 32, 21, 6, 0, { r: 3 }); D('a_sacks', 26, 16, -8, -8, { r: 4 }); D('a_barrow', 33, 24, 6, 6, { r: 4 });
+  D('a_kiosk', 2, 26, 0, -4, { r: 6 }); D('a_scale', 6, 26, 4, -4, { r: 2.5 }); D('a_suitcases', 10, 26, 0, -4, { r: 4 }); D('a_morris', 7, 27, -4, -2, { r: 4.5 }); D('a_trolley', 13, 26, -4, -4, { r: 5 }); D('a_suitcases', 1, 26, -4, 4, { r: 4, rot: .5 });
+  D('a_trolley', 6, 20, 0, 4, { r: 5 }); D('a_suitcases', 10, 17, 4, -4, { r: 4 }); D('a_scale', 11, 19, 4, 0, { r: 2.5, rot: Q }); D('a_sacks', 5, 17, -4, -4, { r: 4 }); D('a_kiosk', 8, 17, 4, -4, { r: 6 });
+  D('a_anvil', 1, 18, -4, 0, { r: 3, rot: Q }); D('a_sacks', 3, 19, 4, 4, { r: 4 }); D('a_barrow', 2, 20, 0, 4, { r: 4 });
+  for (const [x, y, ox, oy] of [[2, 6, -4, 0], [2, 10, 4, 0], [4, 12, 0, 4], [9, 12, 0, -4], [11, 7, 4, 0], [11, 11, -4, 0], [8, 15, 4, 0], [3, 3, -4, 4], [6, 2, 4, -4], [6, 9, -4, 4], [7, 8, 4, -4], [10, 5, 4, 4], [5, 1, 0, -4], [2, 2, -4, -4]]) D('a_bones', x, y, ox, oy, { r: 3, rot: x * 1.7 + y, solid: false });
+  D('a_barrow', 5, 10, -4, 4, { r: 4 }); D('a_barrow', 4, 3, 4, 4, { r: 4, rot: .6 }); D('a_sacks', 7, 10, 4, 4, { r: 4 });
+  D('a_bottles', 17, 17, -4, 0, { r: 4 }); D('a_bottles', 23, 19, 4, 0, { r: 4, rot: Q }); D('a_bottles', 21, 15, 0, -4, { r: 4 }); D('a_sacks', 16, 18, -4, 4, { r: 4 }); D('a_sacks', 24, 16, 4, -4, { r: 4 }); D('a_barrow', 22, 22, 0, 4, { r: 4 }); D('a_sacks', 14, 18, 0, -4, { r: 4 }); D('a_bottles', 19, 20, 4, 4, { r: 4, rot: .4 });
+  for (const [x, y, ox] of [[16, 7, -4], [24, 7, 4], [16, 11, -4], [24, 11, 4]]) D('a_armour', x, y, ox, 0, { r: 3.5, rot: Q });
+  for (const [x, y, ox, oy] of [[16, 6, -4, -4], [24, 6, 4, -4], [16, 12, -4, 4], [24, 12, 4, 4], [19, 4, 4, 4], [21, 1, -4, -4]]) D('a_palm', x, y, ox, oy, { r: 2.5 });
+  D('a_armchair', 17, 10, -4, 4, { r: 5, rot: .5 }); D('a_armchair', 23, 10, 4, 4, { r: 5, rot: -.5 }); D('a_globe', 16, 9, -4, 0, { r: 3 }); D('a_clock', 24, 9, 4, 0, { r: 3, rot: Q });
+  D('a_armchair', 16, 3, -4, 0, { r: 5, rot: Q }); D('a_armchair', 19, 1, 4, -4, { r: 5 }); D('a_globe', 17, 4, 0, 4, { r: 3 }); D('a_clock', 16, 1, -4, -4, { r: 3, rot: Q });
+  D('a_armchair', 22, 2, -4, -2, { r: 5, rot: .3 }); D('a_armchair', 23, 3, 4, 5, { r: 5, rot: -2.4 }); D('a_armour', 24, 2, 4, 0, { r: 3.5, rot: Q }); D('a_clock', 21, 4, -4, 4, { r: 3 }); D('a_globe', 24, 4, 4, 4, { r: 3 });
+  for (const [x, y, ox, oy] of [[27, 10, 0, -4], [29, 8, 0, 4], [32, 10, 0, -4], [31, 13, -4, 0], [29, 13, 4, 0], [27, 8, 0, 4]]) D('a_urn', x, y, ox, oy, { r: 3 });
+  for (const [x, y, ox, oy] of [[26, 6, -4, 0], [33, 8, 4, 0], [29, 12, -4, 0], [33, 13, 4, 4], [30, 5, 0, -4]]) D('a_statue', x, y, ox, oy, { r: 3.5 });
+  D('a_repair', 28, 16, 0, -4, { r: 4 }); D('a_repair', 32, 16, 0, -4, { r: 4 }); D('a_repair', 29, 24, 4, 4, { r: 4 }); D('a_anvil', 27, 20, -4, 0, { r: 3, rot: Q }); D('a_anvil', 32, 21, 4, 0, { r: 3 }); D('a_sacks', 26, 16, -4, -4, { r: 4 }); D('a_barrow', 33, 24, 4, 4, { r: 4 });
+  for (const [x, y, ox, oy] of [[6, 17, 2, 2], [10, 20, -2, 2], [4, 2, 2, 2], [6, 9, 2, -2], [11, 9, 0, 2], [13, 27, 2, 2], [17, 8, 2, 2], [23, 8, -2, 2], [27, 6, 2, 2], [32, 12, -2, -2], [28, 9, 2, 2]]) D('a_drum', x, y, ox, oy, { drum: true, hp: 12 });   // more of the Baron's fuel, left where it will do the most good
+  // underfoot and overhead
+  { let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const F = (n, cx, cy, ox = 0, oy = 0, rot) => decor.push({ model: 'f_' + n, ...C(cx, cy, ox, oy), r: 0, solid: false, rot: rot == null ? rnd() * 6.28 : rot, lift: 0, flat: true });
+    const H = (n, cx, cy, ox = 0, oy = 0, rot = 0) => { const p = C(cx, cy, ox, oy), top = Math.min(WH, ceilingAt(p.x, p.y)); decor.push({ model: 'a_' + n, ...p, r: 0, solid: false, rot, lift: top - MODEL_DEFS['a_' + n].H * VOX, top }); };
+    for (const [x, y, ox, oy] of [[3, 26, 2, 1], [6, 27, -2, 1], [9, 26, 1, -1], [12, 27, 2, 0], [13, 26, -1, 2], [1, 27, 1, 0], [7, 18, 2, -2], [10, 19, -1, 1], [8, 23, 1, 0], [5, 20, 2, 2]]) F('paper', x, y, ox, oy);
+    for (const [x, y] of [[4, 27], [8, 27], [12, 26], [8, 19], [2, 19]]) F('drain', x, y, 0, 2, 0); F('manhole', 8, 18, -2, 0, 0); F('manhole', 10, 27, 0, 0, 0);
+    F('oil', 2, 17, 1, 2); F('cable', 1, 19, 1, 0); F('straw', 3, 18, 1, -1); F('oil', 3, 20, -1, 0);
+    for (const [x, y, ox, oy] of [[2, 7, 1, 0], [2, 11, -1, 2], [5, 12, 0, 1], [9, 12, 1, -1], [11, 8, -1, 0], [11, 10, 1, 2], [8, 14, 0, 0], [4, 3, 2, -1], [6, 1, -2, 1], [3, 2, 0, 2], [6, 8, 1, 1], [7, 9, -2, -1], [10, 4, 0, 1], [13, 8, 0, 2]]) F('boneheap', x, y, ox, oy);
+    for (const [x, y] of [[5, 3], [7, 7], [5, 9], [2, 4]]) F('straw', x, y, 1, 1); F('spill', 6, 4, 0, 0); F('spill', 8, 12, 1, 0);
+    for (const [x, y, ox, oy] of [[18, 15, 0, 2], [22, 21, 1, 0], [20, 19, -2, 1], [14, 18, 0, 1], [17, 22, 1, -1]]) F('spill', x, y, ox, oy); for (const [x, y] of [[16, 16], [24, 20], [19, 22], [21, 14], [23, 17], [17, 19]]) F('straw', x, y, 1, 0); F('drain', 20, 17, 0, 0, 0); F('drain', 20, 20, 0, 0, 0); F('paper', 16, 21, 1, 1);
+    F('rug2', 17, 9, 0, 0, 0); F('rug2', 23, 9, 0, 0, 0); F('rug', 17, 2, 2, 2, 0); F('rug', 23, 2, -2, 2, 0); F('rug2', 22, 3, 2, 2, 0); F('rug2', 18, 3, 2, 2, 0);
+    for (const [x, y, ox, oy] of [[17, 3, 1, -1], [19, 2, -1, 1], [22, 1, 1, 1], [20, 11, 2, 2], [18, 8, -1, 1]]) F('plans', x, y, ox, oy); F('paper', 21, 3, 0, 1); F('paper', 22, 10, 1, 0);
+    for (const [x, y, ox, oy] of [[26, 5, 1, 1], [27, 7, -1, 2], [29, 6, 2, 0], [31, 8, 0, 1], [33, 7, -2, 1], [27, 11, 1, -1], [29, 10, -2, 2], [32, 13, 1, 0], [33, 10, 0, 2], [28, 13, 2, 1], [30, 12, -2, 0], [31, 5, 1, 2], [26, 13, 1, 1], [30, 9, 2, -1]]) F('leaves', x, y, ox, oy);
+    F('manhole', 28, 9, 0, 0, 0); F('drain', 32, 9, 0, 0, 0);
+    for (const [x, y, ox, oy] of [[27, 17, 1, 1], [32, 20, -1, 0], [29, 23, 0, 1], [30, 18, 2, -1], [26, 21, 1, 2], [33, 23, -1, -1]]) F('oil', x, y, ox, oy);
+    for (const [x, y, ox, oy] of [[28, 17, 2, 2], [32, 17, -2, 2], [27, 23, 1, -1], [31, 20, 0, 2], [29, 19, -1, -1]]) F('plans', x, y, ox, oy);
+    for (const [x, y, ox, oy] of [[26, 19, 1, 0], [33, 21, -1, 1], [30, 22, 2, 0], [28, 20, 0, -2], [32, 24, 0, -1]]) F('cable', x, y, ox, oy); F('drain', 29, 20, 0, 0, 0); F('drain', 30, 23, 0, 0, 0);
+    H('hsign', 4, 26, 0, 2, Q); H('hsign', 11, 26, 0, 2, Q); H('hclock', 8, 27, 0, -2, Q); H('hclock', 8, 18, 2, 2, 0); H('hsign', 8, 22, 0, 0, 0);
+    const run = (n, a, b) => { const L = Math.hypot(b.x - a.x, b.y - a.y), k = Math.max(1, Math.round(L / (MODEL_DEFS['a_' + n].W * VOX))), rot = Math.atan2(b.y - a.y, b.x - a.x); for (let i = 0; i < k; i++) { const x = a.x + (b.x - a.x) * (i + .5) / k, y = a.y + (b.y - a.y) * (i + .5) / k, top = Math.min(WH, ceilingAt(x, y)); decor.push({ model: 'a_' + n, x, y, r: 0, solid: false, rot, lift: top - MODEL_DEFS['a_' + n].H * VOX, top }); } };   // pipework: lengths laid end to end
+    run('pipes', C(8, 21, -3, 0), C(8, 24, -3, 0)); run('pipes', C(2, 16, 3, 0), C(2, 20, 3, 0)); run('pipes', C(5, 17, 0, -3), C(11, 17, 0, -3));
+    for (const [x, y, ox, oy] of [[2, 7, -3, 0], [2, 10, 3, 0], [4, 12, 0, 3], [7, 12, 0, -3], [10, 12, 0, 3], [11, 7, 3, 0], [11, 10, -3, 0], [8, 15, -3, 0], [8, 13, 3, 0], [3, 1, 0, -3], [6, 4, 0, 3], [6, 7, 0, -3], [9, 9, 0, 3], [13, 9, 3, 0]]) H('roots', x, y, ox, oy, x * 2.1 + y);
+    for (const cx of [17, 19, 21, 23]) { H('hams', cx, 14, 0, -3, 0); H('hams', cx, 22, 0, 3, 0); }
+    for (const [x, y] of [[17, 9], [23, 9], [17, 11], [23, 11], [19, 12], [21, 12]]) H('banner', x, y, 3, 0, 0); H('fan', 17, 2, 2, 2); H('fan', 18, 3, 2, 2); H('fan', 22, 2, 2, 2); H('fan', 23, 3, 2, 2);
+    H('hoist', 27, 19, 2, 2); H('hoist', 32, 19, -2, 2); H('hoist', 29, 23, 2, 0); for (const [x, y, rot] of [[28, 17, 0], [32, 17, 0], [27, 22, Q], [32, 23, Q]]) H('parts', x, y, 2, 2, rot);
+    run('pipes', C(26, 16, 0, -3), C(29, 16, 0, -3)); run('pipes', C(31, 16, 0, -3), C(33, 16, 0, -3)); run('pipes', C(26, 24, 0, 3), C(33, 24, 0, 3)); run('pipes', C(26, 17, -3, 0), C(26, 23, -3, 0)); run('pipes', C(33, 17, 3, 0), C(33, 23, 3, 0));
+  }
   // catacombs
   E('automate', 8, 13); E('lanterne', 5, 12); E('automate', 2, 9); E('lanterne', 2, 6); E('automate', 4, 2); E('automate', 6, 3); E('lanterne', 6, 8); E('automate', 11, 8);
-  I('helmet', 18, 26); I('grenades', 17, 27); I('shells', 18, 27); I('wine', 13, 7); I('shells', 13, 9); I('bullets', 13, 8); I('cells', 14, 21, -4, -3); I('wine', 14, 22, -4, 3); I('grenades', 14, 22, 4, 3); I('helmet', 14, 21, 4, -3);   // what the hidden rooms hold
+  I('helmet', 18, 26); I('grenades', 17, 27); I('shells', 18, 27); I('wine', 13, 7); I('shells', 13, 9); I('bullets', 13, 8); I('cells', 14, 21, -4, -3); I('wine', 14, 22, -4, 3); I('grenades', 14, 22, 2, 2); I('helmet', 14, 21, 4, -3);   // what the hidden rooms hold
   I('key_blue', 3, 1); I('baguette', 7, 1); I('shells', 5, 9); I('bullets', 8, 10); I('helmet', 10, 4); I('wine', 11, 5);
   // wine cellar
   E('scaphandre', 20, 18); E('automate', 17, 15); E('automate', 23, 21); E('automate', 23, 15); E('lanterne', 20, 21);
@@ -768,14 +802,31 @@ function hurtPlayer(d, from) {                                                  
   const soak = Math.min(P.armour, d * 0.5); P.armour -= soak; P.hp -= d - soak; P.pain = Math.min(.6, P.pain + d * 0.03); P.shake = Math.max(P.shake, .5); sfx('hurt');
   if (P.hp <= 0) { P.hp = 0; P.dead = true; state = 'dead'; showScreen(); }
 }
-function explode(x, y) {
-  const gz = heightAt(x, y); sfx('boom', { x, y }); burst(x, y, gz + 6, 14, 'a_smoke');
+function explode(x, y, fuel) {                                                    // `fuel`: a drum, which also leaves its oil burning where it stood
+  const gz = heightAt(x, y), pd = Math.hypot(P.x - x, P.y - y); sfx('boom', { x, y }); if (fuel) setTimeout(() => sfx('smash', { x, y }), 90); burst(x, y, gz + 6, 14, 'a_smoke');
   for (const p of panels) if (p.far && Math.hypot(p.x - x, p.y - y) < 36) for (let i = 0; i < 3; i++) chip(p, rand(10, 118), rand(4, 90), rand(5, 10));   // the blast tears at the walls around it
-  flashAt(x, y, gz + 8, 170, 4.5, AMBER, .5); sparks(x, y, gz + 5, 34); smoke(x, y, gz + 3, 9); litter('a_scorch', x, y, .05);
-  P.shake = Math.max(P.shake, 2.2 * Math.max(0, 1 - Math.hypot(P.x - x, P.y - y) / 160));
-  for (const e of enemies) if (!e.dead) { const d = Math.hypot(e.x - x, e.y - y); if (d < 46) { hurtEnemy(e, 90 * (1 - d / 50), x, y); if (e.dead && !e.boss && Math.random() < .6) items.push({ kind: Math.random() < .5 && P.has[1] ? 'shells' : 'bullets', x: e.x, y: e.y, z: e.z, small: true }); } }   // a machine blown apart scatters its ammunition
-  for (const d of decor) if (!d.gone && d.hp > 0 && Math.hypot(d.x - x, d.y - y) < 40) { if (d.drum) { d.hp = 0; if (d.fuse == null) d.fuse = .15; } else if (!d.chand || Math.hypot(d.x - x, d.y - y) < 22) hitDecor(d, 60); }
-  const pd = Math.hypot(P.x - x, P.y - y); if (pd < 46) hurtPlayer(55 * (1 - pd / 50), { x, y });
+  flashAt(x, y, gz + 10, 200, 3.2, [1, .8, .5], .16); flashAt(x, y, gz + 8, 150, 1.6, AMBER, .8); sparks(x, y, gz + 5, 44); smoke(x, y, gz + 3, 14); litter('a_scorch', x, y, .05);
+  const big = fuel ? 1.5 : 1;
+  for (let i = 0; i < 26 * big; i++) { const a = Math.random() * 6.28, v = rand(15, 95) * big, hot = Math.random();   // the fireball: a white-hot heart, orange round it, rolling up and out
+    spawn('chip', x, y, gz + rand(2, 9), { k: [rand(1.2, 2.6) * big, 1, .45 + hot * .5, .1 + hot * .5, 1], vx: Math.cos(a) * v, vy: Math.sin(a) * v, vz: rand(25, 120), g: 90, life: rand(.25, .6) }); }
+  for (let i = 0; i < 36; i++) { const a = i / 36 * 6.28 + rand(-.05, .05), v = 190 * big; spawn('chip', x, y, gz + 1, { k: [1.4, 1, .85, .6, 1], vx: Math.cos(a) * v, vy: Math.sin(a) * v, vz: 4, g: 0, life: .2 }); }   // the shock running out across the floor
+  for (let i = 0; i < 18 * big; i++) { const a = Math.random() * 6.28, v = rand(40, 150); spawn('chip', x, y, gz + rand(4, 10), { k: [rand(.5, 1), 1, rand(.4, .7), .1, 1], vx: Math.cos(a) * v, vy: Math.sin(a) * v, vz: rand(60, 170), g: 230, bounce: true, life: rand(1, 2.2) }); }   // embers thrown high, which bounce and die
+  if (fuel) { for (let i = 0; i < 16; i++) { const a = Math.random() * 6.28, v = rand(50, 140); spawn('chip', x, y, gz + rand(4, 10), { k: [rand(.9, 1.8), rand(.45, .7), .08, .08, 0], vx: Math.cos(a) * v, vy: Math.sin(a) * v, vz: rand(50, 150), g: 230, bounce: true, life: rand(1.2, 2.4) }); }   // what is left of the drum
+    fires.push({ x, y, z: gz, t: 4.5, tick: 0 }); if (fires.length > 6) fires.shift(); }
+  setTimeout(() => { if (state === 'play') smoke(x, y, gz + 10, 10); }, 180);                              // and the smoke that follows the fire up
+  P.shake = Math.max(P.shake, 3 * big * Math.max(0, 1 - pd / 200)); if (pd < 150) freeze = Math.max(freeze, .06);
+  if (pd < 90 && pd > 1) { const k = 240 * (1 - pd / 90); P.vx += (P.x - x) / pd * k; P.vy += (P.y - y) / pd * k; P.punch += .05 * (1 - pd / 90); }   // the blast shoves you
+  const R0 = 46 * (fuel ? 1.25 : 1);
+  for (const e of enemies) if (!e.dead) { const d = Math.hypot(e.x - x, e.y - y); if (d < R0) { hurtEnemy(e, 100 * (1 - d / (R0 + 6)), x, y); if (!e.dead) { const m = e.boss ? .1 : 1; e.kx += (e.x - x) / (d || 1) * 160 * m; e.ky += (e.y - y) / (d || 1) * 160 * m; } else if (!e.boss && Math.random() < .6) items.push({ kind: Math.random() < .5 && P.has[1] ? 'shells' : 'bullets', x: e.x, y: e.y, z: e.z, small: true }); } }   // a machine blown apart scatters its ammunition
+  for (const d of decor) if (!d.gone && d.hp > 0 && Math.hypot(d.x - x, d.y - y) < R0) { if (d.drum) { d.hp = 0; if (d.fuse == null) d.fuse = .18; } else if (!d.chand || Math.hypot(d.x - x, d.y - y) < 22) hitDecor(d, 60); }
+  if (pd < R0) hurtPlayer(55 * (1 - pd / (R0 + 4)), { x, y });
+}
+function burn(dt) {                                                               // burning oil: flames, a flickering light, and harm to whatever stands in it
+  for (let i = fires.length - 1; i >= 0; i--) { const f = fires[i]; if ((f.t -= dt) <= 0) { fires.splice(i, 1); continue; } const k = Math.min(1, f.t / 1.2);
+    for (let n = 0; n < 2; n++) if (Math.random() < k) { const a = Math.random() * 6.28, d = Math.random() * 11; spawn('chip', f.x + Math.cos(a) * d, f.y + Math.sin(a) * d, f.z + .5, { k: [rand(.9, 2) * k, 1, rand(.45, .8), .12, 1], vx: rand(-4, 4), vy: rand(-4, 4), vz: rand(14, 34), g: -26, life: rand(.3, .6) }); }
+    if ((f.tick -= dt) <= 0) { f.tick = .25; flashAt(f.x, f.y, f.z + 6, 90, 1.1 * k, AMBER, .3); if (Math.random() < .5) smoke(f.x, f.y, f.z + 8, 1);
+      for (const e of enemies) if (!e.dead && !e.fly && Math.hypot(e.x - f.x, e.y - f.y) < 13 + e.r) hurtEnemy(e, 5, f.x, f.y);
+      if (!P.dead && Math.hypot(P.x - f.x, P.y - f.y) < 13 && Math.abs(P.z - f.z) < 8) hurtPlayer(3, { x: f.x, y: f.y }); } }
 }
 function hurtEnemy(e, dmg, fx0, fy0, hit) {                                    // `hit`: how high the shot struck and how far to the machine's left or right of its middle
   if (e.dead) return;
@@ -1031,6 +1082,9 @@ function update(dt) {
   P.speed = Math.hypot(P.x - ox, P.y - oy) / Math.max(dt, 1e-4);                                          // the speed actually made good: walking into a wall is standing still
   P.sprint += ((run && P.speed > 190 ? 1 : 0) - P.sprint) * Math.min(1, 6 * dt);
   if (!going && before >= 50 && P.speed < 50) P.dipT = .3;                                                // coming to a stop, the view settles
+  if ((tagT -= dt) <= 0) { tagT = .08; let best = null, bd = 1e9; const fxv = Math.cos(P.yaw), fyv = Math.sin(P.yaw);     // what the crosshair is on
+    for (const e of enemies) { if (e.dead || e.boss) continue; const ex = e.x - P.x, ey = e.y - P.y, f = ex * fxv + ey * fyv; if (f < 4 || f > 300 || f > bd) continue; if (Math.abs(ey * fxv - ex * fyv) < e.r + 2 + f * .02 && canSee(P.x, P.y, e.x, e.y)) { best = e; bd = f; } }
+    const el = $('tag'); if (el) { if (best) { const k = KIND[best.type]; el.innerHTML = `<b style="color:${k.col}">${k.name}</b><i><u style="width:${Math.max(0, Math.round(100 * best.hp / best.hp0))}%;background:${k.col}"></u></i>`; } el.style.opacity = best ? 1 : 0; } }
   P.dipT = Math.max(0, P.dipT - dt); P.punch -= P.punch * Math.min(1, 8 * dt); P.hitT = Math.max(0, P.hitT - dt);
   for (let i = P.hits.length - 1; i >= 0; i--) if ((P.hits[i].t -= dt * .9) <= 0) P.hits.splice(i, 1);
   const here = tile(Math.floor(P.x / CS), Math.floor(P.y / CS)), was = P.bob;
@@ -1129,7 +1183,8 @@ function update(dt) {
     else if (s2.from) for (const o of enemies) if (o !== s2.from && !o.dead && Math.hypot(s2.x - o.x, s2.y - o.y) < o.r && s2.lift > o.z + (o.fly || 0) - 2 && s2.lift < o.z + (o.fly || 0) + 20) {   // a machine in the line of fire takes the shot, and takes it personally
       hurtEnemy(o, s2.dmg * 2, s2.x - s2.vx, s2.y - s2.vy); if (!o.boss && !s2.from.dead && o.type !== s2.from.type) { o.grudge = s2.from; o.grudgeT = 3.5; } shots.splice(i, 1); break; }
   }
-  for (const d of decor) if (d.fuse != null && !d.gone) { d.fuse -= dt; if (d.fuse <= 0) { d.gone = true; thingsDirty = true; explode(d.x, d.y); } }
+  for (const d of decor) if (d.fuse != null && !d.gone) { d.fuse -= dt; if (d.fuse <= 0) { d.gone = true; thingsDirty = true; explode(d.x, d.y, true); } }
+  burn(dt);
   for (let i = fx.length - 1; i >= 0; i--) {
     const p = fx[i], nx = p.x + p.vx * dt, ny = p.y + p.vy * dt; p.t += dt;
     if (solidAtPt(nx, ny)) { p.vx *= -.4; p.vy *= -.4; } else { p.x = nx; p.y = ny; }                    // off the walls
@@ -1194,7 +1249,7 @@ function render(now) {
   R.ground(WH, -1, 0); if (LEVEL === 1) R.ground(LOWC, -1, 1);
   let n = 0, nc = 0, ns = 0; const lod = R.fast ? .55 : 1;                   // with lighter graphics, the fine detail gives way to the coarse nearer the eye
   const vis = (x, y, r) => { const ex = x - P.x, ey = y - P.y, f = ex * fxv + ey * fyv; return f > -r && f < FP.far + r && Math.abs(ey * fxv - ex * fyv) < f * 0.9 + r + 8; };
-  const draw = (name, x, y, rot, lift, flash) => { if (!vis(x, y, 14)) return; const d = MODEL_DEFS[name]; R.draw(mesh(name), M4(x, y, lift || 0, rot), d.o ? d.o.vox : 1, flash); n++; };
+  const draw = (name, x, y, rot, lift, flash) => { if (!vis(x, y, 14)) return; const d = MODEL_DEFS[name], t = tintOf(name); if (t) R.tint(t[0], t[1], t[2]); R.draw(mesh(name), M4(x, y, lift || 0, rot), d.o ? d.o.vox : 1, flash); if (t) R.tint(); n++; };
   const cube = (k, x, y, z) => { if (nc >= 4096 || !vis(x, y, 2)) return; cubeBuf.set([x, y, z, k[0], k[1], k[2], k[3], k[4]], nc++ * 8); };
   for (const p of panels) if ((P.x - p.x) * p.nx + (P.y - p.y) * p.ny > 0 && vis(p.x, p.y, 12)) { const d2 = (P.x - p.x) ** 2 + (P.y - p.y) ** 2, far = p.far && d2 > (170 * lod) ** 2; if (!far && p.ready) for (const b of p.blocks) R.draw(b, p.M, 1 / WPU); else if (far) R.draw(p.far, p.M, .5); else if (p.mid && d2 > (64 * lod) ** 2) R.draw(p.mid, p.M, 2 / WPU); else R.draw(p.m, p.M, p.vox || 1 / WPU); n++; }   // only the sides that face the player; coarse ones in the distance
   for (const p of posts) if (vis(p.x, p.y, 2)) { R.draw(p.m, p.M, 1 / WPU); n++; }
@@ -1204,6 +1259,7 @@ function render(now) {
   for (const d of decor) if (!d.gone) { if (d.swing && vis(d.x, d.y, 8)) { R.draw(mesh(d.model), M4(d.x, d.y, d.lift, d.rot, Math.sin(time * 1.4 + d.x * .3) * .09, d.swing), VOX); n++; } else draw(d.model, d.x, d.y, d.rot, (d.lift || 0) + (d.z || 0)); }
   for (const it of items) draw(PICK[it.kind].model, it.x, it.y, now * 0.002, (it.z || 0) + 3 + Math.sin(now * 0.004 + it.x) * 1.2);
   for (const e of enemies) if ((!e.dead || e.dying) && vis(e.x, e.y, 14)) {   // a destroyed machine is only wreckage now, unless it is still falling over
+    { const t = KIND[e.type].tint || [1, 1, 1]; R.tint(t[0], t[1], t[2], e.dead ? 0 : .06); }
     const rot = e.yaw - Math.PI / 2, fl = e.flash > 0 ? 0.8 : 0, lift = e.z + e.hop + (e.fly ? e.fly + Math.sin(e.t * 3) * 1.5 : 0), rig = RIG[e.type];
     const hurt = e.hp < e.hp0 * .34 ? '_d2' : e.hp < e.hp0 * .67 ? '_d1' : '', walk = e.awake && e.moving && !e.dead, rushing = e.rush ? (e.rush.go ? 1 : 1 - e.rush.wind / .95) : e.jump ? 1 : 0;
     const charge = e.wind > 0 ? 1 - e.wind / WIND : 0, lean = (e.atk > 0 ? .1 * e.atk / .22 : 0) + Math.min(.4, e.stun * 1.3) - charge * .1 - rushing * .32 + (e.fly ? Math.sin(e.t * 2.3) * .1 : walk ? -.05 : 0);   // rocked back by its own recoil or by a hit; leaning into its stride
@@ -1225,12 +1281,14 @@ function render(now) {
       }
       n += 10;
     }
+    R.tint();
     if (charge) cube([.5 + charge * 1.2, 1, .5 + charge * .3, .15 + charge * .2, 1], e.x + Math.cos(e.yaw) * (e.r + 3), e.y + Math.sin(e.yaw) * (e.r + 3), e.z + 8 + (e.fly || 0));   // the charge building at the muzzle
     if (e.rush && !e.rush.go) cube([1 + rushing * 2.2, 1, .2, .12, 1], e.x + Math.cos(e.yaw) * e.r, e.y + Math.sin(e.yaw) * e.r, e.z + 19);   // the furnace in its chest flares before it charges
     if (hurt && Math.random() < (hurt === '_d2' ? .25 : .08)) sparks(e.x, e.y, lift + rand(8, 14), 1);                // a damaged machine spits sparks
   }
   if (train.x < TRAIN_END) for (let i = 0; i < CARS; i++) { const x = train.x + i * 31; if (x > 20 && x < 492) draw('a_train', x, TRAIN_Y, 0, -PIT + .8); }   // three carriages, hidden while they are inside the tunnels
-  for (const d of debris) { const k = PARTICLE[d.model]; if (k) cube(k, d.x, d.y, d.lift); else if (d.tip) { if (vis(d.x, d.y, 14)) { R.draw(mesh(d.model), M4(d.x, d.y, d.lift + 1.5, d.rot, d.tip * 1.5, d.base + 1.5), VOX); n++; } } else draw(d.model, d.x, d.y, d.rot, d.lift); }
+  for (const d of debris) { const k = PARTICLE[d.model]; if (k) cube(k, d.x, d.y, d.lift); else if (d.tip) { if (vis(d.x, d.y, 14)) { const t = tintOf(d.model); if (t) R.tint(t[0], t[1], t[2]); else R.tint(); R.draw(mesh(d.model), M4(d.x, d.y, d.lift + 1.5, d.rot, d.tip * 1.5, d.base + 1.5), VOX); n++; } } else draw(d.model, d.x, d.y, d.rot, d.lift); }
+  R.tint();
   for (const b of brass) cube(PARTICLE[b.model], b.x, b.y, b.lift);
   for (const s of shots) draw(s.model, s.x, s.y, Math.atan2(s.vy, s.vx) - Math.PI / 2, s.lift);
   for (const p of fx) {
