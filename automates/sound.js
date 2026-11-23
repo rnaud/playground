@@ -9,7 +9,7 @@ function Sound(ctx) {
   dry.connect(comp); verb.connect(wet); wet.connect(comp); bed.connect(comp); comp.connect(master); master.connect(ctx.destination); master.gain.value = .9;
   const white = ctx.createBuffer(1, R * 2, R); { const d = white.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
   // a reverb tail made from decaying noise: seconds long, how fast it darkens, how loud
-  const ROOMS = { metro: [2.4, 2.2, .3], catacombs: [1.5, 3, .28], cellar: [1.1, 3.2, .22], chateau: [.8, 4, .14], courtyard: [.45, 6, .06], workshop: [1.7, 2.6, .26] };
+  const ROOMS = { metro: [2.4, 2.2, .3], catacombs: [1.5, 3, .28], cellar: [1.1, 3.2, .22], chateau: [.8, 4, .14], courtyard: [.45, 6, .06], roofs: [.5, 6, .07], workshop: [1.7, 2.6, .26] };
   const tails = {}, tail = name => {
     if (tails[name]) return tails[name];
     const [secs, damp] = ROOMS[name], b = ctx.createBuffer(2, R * secs | 0, R);
@@ -86,6 +86,7 @@ function Sound(ctx) {
     tink: (d, t) => { tick(d, t, .3, 5200); noise(d, t, .05, .16, 'highpass', 4200, 6200, .6); tone(d, t, .04, .05, 'sine', rnd(2600, 3600)); },                               // glazed tile cracking
     crumble: (d, t) => { noise(d, t, .09, .3, 'bandpass', 900, 380, .8); tick(d, t, .16, 1500); noise(d, t + .03, .12, .1, 'lowpass', 500, 200); },                           // stone and brick
     thud: (d, t) => { tone(d, t, .08, .26, 'sine', 150, 70); noise(d, t, .05, .16, 'bandpass', 600, 300, 1.2); },                                                              // wood, earth, carpet
+    thunder: (d, t) => { noise(d, t, .25, .7, 'lowpass', 1800, 200, .6, .01); noise(d, t + .1, 3.2, .8, 'lowpass', 300, 45, .6, .3); tone(d, t + .1, 2.6, .5, 'sine', 52, 28, .3); noise(d, t + 1.1, 2.4, .3, 'lowpass', 160, 40, .6, .5); },   // the crack, then the long roll
     thump: (d, t) => { tone(d, t, .2, .22, 'sine', 70, 40); tick(d, t + .01, .06, 700); },
     clock: (d, t) => tick(d, t, .05, 1500),
     train: (d, t) => {                                                       // six seconds: the rumble building and fading, wheels over the rail joints, a brake squeal
@@ -105,9 +106,10 @@ function Sound(ctx) {
   // ---- the room you are in: its reverb, and a quiet bed of sound with occasional details ----
   const BEDS = {
     metro: g => { hum(g, 50, .012); wash(g, 'lowpass', 160, .05, .07); }, catacombs: g => wash(g, 'bandpass', 320, .035, .11), cellar: g => wash(g, 'lowpass', 120, .035, .05),
+    roofs: g => { wash(g, 'highpass', 2600, .07, .23); wash(g, 'bandpass', 900, .05, .11); wash(g, 'lowpass', 180, .05, .07); },   // rain on zinc: the hiss, the drumming, the wind under it
     chateau: g => wash(g, 'lowpass', 90, .015, .04), courtyard: g => { wash(g, 'highpass', 1800, .018, .13); wash(g, 'bandpass', 420, .02, .09); }, workshop: g => { hum(g, 60, .02); hum(g, 120, .01); wash(g, 'highpass', 4200, .012, .2); },
   };
-  const DETAIL = { metro: ['drip', 9], catacombs: ['drip', 4], cellar: ['drip', 7], chateau: ['clock', 1], courtyard: ['cricket', 1.6], workshop: ['thump', 1.4] };
+  const DETAIL = { metro: ['drip', 9], catacombs: ['drip', 4], cellar: ['drip', 7], chateau: ['clock', 1], courtyard: ['cricket', 1.6], roofs: ['drip', 2.5], workshop: ['thump', 1.4] };
   function hum(g, f, v) { const o = ctx.createOscillator(), a = ctx.createGain(); o.frequency.value = f; a.gain.value = v; o.connect(a); a.connect(g); o.start(); }
   function wash(g, type, f, v, rate) {                                       // filtered noise that slowly swells and falls
     const s = ctx.createBufferSource(), fl = ctx.createBiquadFilter(), a = ctx.createGain(), l = ctx.createOscillator(), d = ctx.createGain();
@@ -125,7 +127,7 @@ function Sound(ctx) {
   } };
   const beds = {}; let room = null, next = 1;
   // how loud each effect sits in the mix: guns and pain up front, the rest behind them
-  const LEVEL = { ric: 1.5, tink: 1.5, crumble: 1.5, thud: 1.5, pistol: 1.8, smg: 1.6, shotgun: 1.8, tesla: 1.7, click: 2, hit: 2.4, die: 1.5, boom: 1.25, enemy: 2.4, wake: 2, door: 1.3, pickup: 1.6, key: 1.5, hurt: 3, swap: 1.6, train: 1.6 };
+  const LEVEL = { thunder: 1.6, ric: 1.5, tink: 1.5, crumble: 1.5, thud: 1.5, pistol: 1.8, smg: 1.6, shotgun: 1.8, tesla: 1.7, click: 2, hit: 2.4, die: 1.5, boom: 1.25, enemy: 2.4, wake: 2, door: 1.3, pickup: 1.6, key: 1.5, hurt: 3, swap: 1.6, train: 1.6 };
   const play = (kind, o = {}) => { const f = FX[kind] || STEP[kind]; if (f) f(bus((o.vol == null ? 1 : o.vol) * (LEVEL[kind] || 1), o.pan || 0, o.muffle || 0, o.send == null ? 1 : o.send), now() + .001); };
   return {
     play, kinds: Object.keys(FX), steps: Object.keys(STEP), rooms: Object.keys(ROOMS),

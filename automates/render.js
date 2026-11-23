@@ -76,7 +76,7 @@ void main() {
   const FULL = `out vec2 v; void main() { v = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(v * 2.0 - 1.0, 0.0, 1.0); }`;
   const lightP = prog(FULL, `in vec2 v; out vec4 o;
 uniform sampler2D u_a, u_n, u_d, u_lm, u_fm, u_cells, u_prev, u_things; uniform vec3 u_lb[${MAXL}]; uniform vec4 u_eye, u_proj, u_fog; uniform vec3 u_view; uniform float u_world, u_far, u_sky, u_time, u_fast, u_dim; uniform vec2 u_grid;
-uniform vec4 u_lp[${MAXL}], u_lc[${MAXL}], u_occ[${MAXO}]; uniform int u_nl, u_no; uniform vec4 u_mist; uniform vec3 u_mistc, u_kind[12]; uniform vec2 u_px;
+uniform vec4 u_lp[${MAXL}], u_lc[${MAXL}], u_occ[${MAXO}]; uniform int u_nl, u_no; uniform vec4 u_mist; uniform vec3 u_mistc, u_kind[12], u_rain; uniform vec2 u_px;   // u_rain: how hard it rains, how bright the lightning is this instant
 float fwdOf(float z) { if (z < 0.1) z *= 10.0;                       // the weapon in hand is drawn into the front tenth of the depth range
   float A = (u_proj.w + u_proj.z) / (u_proj.w - u_proj.z), B = 2.0 * u_proj.w * u_proj.z / (u_proj.w - u_proj.z); return B / (A - (z * 2.0 - 1.0)); }
 vec3 worldAt(vec2 uv, float f) { vec2 ndc = uv * 2.0 - 1.0 - u_view.yz; float c = cos(u_eye.z), s = sin(u_eye.z); return vec3(u_eye.xy + f * vec2(c, s) + ndc.x * f / u_proj.x * vec2(-s, c), u_eye.w + (ndc.y / u_proj.y + u_view.x) * f); }
@@ -101,6 +101,14 @@ float things(vec3 p, vec3 l, float jit) {                             // furnitu
   return 1.0;
 }
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+float vnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y); }
+float rainAt(vec2 uv, float T) {                                      // four curtains of streaks at growing distances, each hidden by whatever stands nearer than it
+  float e = (uv.y * 2.0 - 1.0) / u_proj.y + u_view.x, az = u_eye.z + atan((uv.x * 2.0 - 1.0) / u_proj.x), sum = 0.0;
+  for (int k = 0; k < 4; k++) { float fk = float(k), d = 14.0 * pow(2.3, fk); if (d > T) break;
+    vec2 g = vec2((az + e * 0.1) * d * 1.5, e * d * 0.085 + u_time * (3.0 - fk * 0.5)); float col = floor(g.x), h = hash(vec2(col, fk * 7.0 + 1.0)), y = fract(g.y + h * 9.0), x = abs(fract(g.x) - 0.5);
+    sum += step(0.35, hash(vec2(col, floor(g.y + h * 9.0) + fk * 3.0))) * smoothstep(0.0, 0.06, y) * smoothstep(0.42, 0.1, y) * smoothstep(0.05 + fk * 0.05, 0.0, x) * (1.0 - fk * 0.17); }
+  return sum;
+}
 vec3 skyAt(vec2 uv) {                                                 // dusk over Paris: a gradient, stars, a skyline of roofs with lit windows, and the tower
   float e = (uv.y * 2.0 - 1.0) / u_proj.y + u_view.x, az = u_eye.z + atan((uv.x * 2.0 - 1.0) / u_proj.x);
   vec3 sky = mix(vec3(1.0, 0.52, 0.34), vec3(0.17, 0.13, 0.36), smoothstep(-0.02, 0.6, e)) + step(0.9985, hash(floor(uv * vec2(420.0, 260.0)))) * smoothstep(0.15, 0.6, e) * 0.9;
@@ -109,6 +117,9 @@ vec3 skyAt(vec2 uv) {                                                 // dusk ov
   tower = e < 0.5 && t < 0.006 + 0.075 * pow(max(0.0, 1.0 - e / 0.5), 3.2) ? 1.0 : 0.0;
   if (e < roof) { vec2 w = floor(vec2(az * 230.0, e * 150.0)); return mix(vec3(0.07, 0.06, 0.14), vec3(1.0, 0.8, 0.45), step(0.9, hash(w)) * step(0.02, e)); }
   if (tower > 0.5) return mix(vec3(0.09, 0.07, 0.15), vec3(1.0, 0.75, 0.4), step(0.94, hash(floor(vec2(az * 400.0, e * 90.0)))) * 0.8);
+  if (u_rain.x > 0.0) { float n = vnoise(vec2(az * 3.0 + u_time * 0.0, e * 9.0)) * 0.6 + vnoise(vec2(az * 9.0, e * 26.0)) * 0.4;   // a storm: no stars, heavy cloud lit from the city below, and lightning inside it
+    vec3 storm = mix(vec3(0.07, 0.08, 0.13), vec3(0.2, 0.2, 0.27), n) + vec3(0.42, 0.2, 0.1) * exp(-e * 8.0) + vec3(0.55, 0.62, 0.8) * u_rain.y * (0.35 + 0.65 * n);
+    sky = mix(sky, storm, u_rain.x); }
   return sky;
 }
 vec3 edged(vec3 c, float z, float a) {                               // a machine is drawn round in its own colour: any pixel that is not machine but has machine beside and in front of it
@@ -119,8 +130,12 @@ vec3 edged(vec3 c, float z, float a) {                               // a machin
 }
 void main() {
   float z = texture(u_d, v).r; vec3 O = vec3(u_eye.xy, u_eye.w);
-  if (z >= 1.0) { o = vec4(edged(mix(vec3(0.03, 0.028, 0.04), skyAt(v), u_sky), z, 0.0), 1.0); return; }
-  float f = fwdOf(z); vec3 P = worldAt(v, f); vec4 A = texture(u_a, v), N = texture(u_n, v); vec3 n = normalize(N.xyz * 2.0 - 1.0), V = normalize(O - P);
+  if (z >= 1.0) { o = vec4(edged(mix(vec3(0.03, 0.028, 0.04), skyAt(v), u_sky) + rainAt(v, 1e9) * vec3(0.5, 0.56, 0.68) * 0.3 * u_rain.x * (1.0 + u_rain.y * 2.0), z, 0.0), 1.0); return; }
+  float f = fwdOf(z); vec3 P = worldAt(v, f); vec4 A = texture(u_a, v), N = texture(u_n, v); vec3 n = normalize(N.xyz * 2.0 - 1.0), V = normalize(O - P); vec2 wob = vec2(0.0);
+  if (u_rain.x > 0.0 && n.z > 0.6 && texelFetch(u_cells, ivec2(P.xy / 16.0), 0).a > 0.99) {      // rain on an open floor: it darkens, shines, stands in puddles, and each drop rings
+    float pud = smoothstep(0.42, 0.6, vnoise(P.xy * 0.05)), wet = u_rain.x * (0.5 + 0.5 * pud); A.rgb *= 1.0 - 0.4 * wet; N.a = max(N.a, wet); n = normalize(mix(n, vec3(0.0, 0.0, 1.0), pud * 0.9));
+    vec2 q = P.xy / 4.5, ci = floor(q), fq = fract(q) - 0.5; float ph = fract(hash(ci) + u_time * 1.3), dd = length(fq);
+    wob = fq / max(dd, 0.01) * sin((dd - ph * 0.45) * 46.0) * smoothstep(ph * 0.45 + 0.07, ph * 0.45, dd) * smoothstep(ph * 0.45 - 0.16, ph * 0.45, dd) * (1.0 - ph) * (0.25 + 0.75 * pud) * 0.3 * u_rain.x; }
   float occ = 0.0, rot = hash(v * 931.0 + u_time) * 6.283;                     // ambient occlusion from the neighbouring pixels' positions
   for (int i = 0; i < 8; i++) { float a = rot + float(i) * 0.785, r = (0.35 + 0.65 * fract(float(i) * 0.618)) * 2.2; vec2 uv = v + vec2(cos(a) * u_proj.x, sin(a) * u_proj.y) * r / f * 0.5;
     vec3 q = worldAt(uv, fwdOf(texture(u_d, uv).r)) - P; float d2 = dot(q, q); occ += max(dot(n, q) / sqrt(d2 + 1e-4) - 0.12, 0.0) / (1.0 + d2 * 0.12); }
@@ -144,7 +159,7 @@ void main() {
   vec3 amb = texture(u_lm, P.xy / u_world).rgb * u_dim;                 // (the baked light dims when the lamps go out)
   vec3 c = A.rgb * (amb * ao + (diff + max(farl, 0.0) * u_dim) * mix(1.0, ao, 0.5)) + spec * N.a * 0.9;
   if (u_fast < 0.5 && N.a > 0.3 && n.z > 0.6) {                                        // polished floors mirror the room: follow the reflected ray across the last frame until it meets something
-    vec3 Rr = reflect(D, normalize(mix(vec3(0.0, 0.0, 1.0), n, 0.35))); float hit = 0.0; vec2 huv = v;
+    vec3 Rr = reflect(D, normalize(mix(vec3(0.0, 0.0, 1.0), n, 0.35) + vec3(wob, 0.0))); float hit = 0.0; vec2 huv = v;
     for (int i = 1; i <= 10; i++) { vec3 sp = screenOf(P + Rr * (float(i) + jit) * 3.4); if (sp.z < u_proj.z || sp.x < 0.0 || sp.x > 1.0 || sp.y < 0.0 || sp.y > 1.0) break;
       float sf = fwdOf(texture(u_d, sp.xy).r); if (sf < sp.z - 0.6 && sf > sp.z - 9.0) { hit = 1.0; huv = sp.xy; break; } }
     float edge = min(min(huv.x, 1.0 - huv.x), min(huv.y, 1.0 - huv.y));
@@ -155,7 +170,7 @@ void main() {
   { float zo = max(O.z - u_mist.z, -3.0), zp = max(P.z - u_mist.z, -3.0), dz = zp - zo, eo = exp(-u_mist.y * zo);     // mist lying on the floor: thick at your feet, gone by head height, and lit by whatever lamps stand in it
     float od = u_mist.x * T * (abs(dz) < 0.05 ? eo : (eo - exp(-u_mist.y * zp)) / (u_mist.y * dz));
     c = mix(c, u_mistc * (0.1 + u_mist.w * (amb + max(farl, 0.0) * 0.5 + diff * 0.25)), 1.0 - exp(-od)); }
-  o = vec4(edged(c + glow, z, A.a), 1.0);
+  o = vec4(edged(c + glow + rainAt(v, T) * vec3(0.5, 0.56, 0.68) * 0.3 * u_rain.x * (1.0 + u_rain.y * 2.0), z, A.a), 1.0);
 }`);
   const smokeP = prog(CAM + `layout(location = 0) in vec2 a_q; layout(location = 1) in vec4 i_p; layout(location = 2) in vec4 i_c; out vec2 v_q; out vec4 v_c; out float v_f;
 void main() { float c = cos(u_eye.z), s = sin(u_eye.z); vec4 p = project(i_p.xyz + vec3(-s, c, 0.0) * a_q.x * i_p.w + vec3(0.0, 0.0, a_q.y * i_p.w)); gl_Position = p; v_f = p.w; v_q = a_q; v_c = i_c; }`,
@@ -280,7 +295,7 @@ void main() {
       for (let i = 0; i < no; i++) oc.set(o.bodies[i], i * 4);
       gl.useProgram(lightP.p); camera(u); bind(0, gA, u.u_a); bind(1, gN, u.u_n); bind(2, gD, u.u_d); bind(3, lmT, u.u_lm); bind(4, cellsT, u.u_cells); bind(5, prev, u.u_prev); bind(6, thingsT, u.u_things); bind(7, fmT, u.u_fm); gl.uniform3fv(u.u_lb, lb);
       gl.uniform4fv(u.u_lp, lp); gl.uniform4fv(u.u_lc, lc); gl.uniform4fv(u.u_occ, oc); gl.uniform1i(u.u_nl, nl); gl.uniform1i(u.u_no, no);
-      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform3f(u.u_view, eye.pitch || 0, jit[0], jit[1]); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0); gl.uniform1f(u.u_dim, o.dim == null ? 1 : o.dim); gl.uniform4fv(u.u_mist, o.mist || [0, 1, 0, 0]); gl.uniform3fv(u.u_mistc, o.mistc || [0, 0, 0]); gl.uniform3fv(u.u_kind, o.kinds || new Float32Array(36)); gl.uniform2f(u.u_px, 1 / W, 1 / H);
+      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform3f(u.u_view, eye.pitch || 0, jit[0], jit[1]); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0); gl.uniform1f(u.u_dim, o.dim == null ? 1 : o.dim); gl.uniform4fv(u.u_mist, o.mist || [0, 1, 0, 0]); gl.uniform3fv(u.u_mistc, o.mistc || [0, 0, 0]); gl.uniform3fv(u.u_kind, o.kinds || new Float32Array(36)); gl.uniform2f(u.u_px, 1 / W, 1 / H); gl.uniform3fv(u.u_rain, o.rain || [0, 0, 0]);
       full();
       if (o.smokeCount) {                                            // smoke sits in front of the lit scene and fades against it
         const s = smokeP.u; gl.useProgram(smokeP.p); camera(s); bind(2, gD, s.u_d); gl.uniform2f(s.u_size, W, H); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);

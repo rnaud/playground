@@ -805,11 +805,12 @@ function sfx(kind, at) {
   if (d > 420) return;
   snd.play(kind, { vol: 1 / (1 + (d / 70) ** 2), pan: Math.sin(Math.atan2(dy, dx) - P.yaw) * Math.min(1, d / 30) * .85, muffle: Math.min(.85, d / 500 + (canSee(P.x, P.y, at.x, at.y) ? 0 : .5)) });
 }
-const GRADE = { metro: [.97, 1.02, 1.08, 1.1], catacombs: [1.1, .96, .8, 1.2], cellar: [1.12, .93, .8, 1.16], chateau: [1.08, 1, .87, 1.06], courtyard: [.9, .97, 1.17, 1.12], workshop: [.9, 1.05, 1.02, 1.18] }, grade = [1, 1, 1, 1];
+const GRADE = { metro: [.97, 1.02, 1.08, 1.1], catacombs: [1.1, .96, .8, 1.2], cellar: [1.12, .93, .8, 1.16], chateau: [1.08, 1, .87, 1.06], courtyard: [.9, .97, 1.17, 1.12], roofs: [.84, .95, 1.2, 1.18], workshop: [.9, 1.05, 1.02, 1.18] }, grade = [1, 1, 1, 1];
 // The mist that lies in each place: how thick, how fast it thins with height, how much it takes the lamps' light, and its colour.
-const MIST = { metro: [.0035, .2, .9, .8, .86, 1], catacombs: [.011, .13, 1.1, 1, .74, .5], cellar: [.01, .13, 1.1, 1, .62, .46], chateau: [.0025, .12, .9, 1, .86, .62], courtyard: [.007, .16, .8, .5, .62, .95], workshop: [.007, .12, 1, .6, .92, .8] }, mist = [0, .15, 1, 1, 1, 1, 0];
+const MIST = { metro: [.0035, .2, .9, .8, .86, 1], catacombs: [.011, .13, 1.1, 1, .74, .5], cellar: [.01, .13, 1.1, 1, .62, .46], chateau: [.0025, .12, .9, 1, .86, .62], courtyard: [.007, .16, .8, .5, .62, .95], roofs: [.008, .1, .7, .5, .58, .8], workshop: [.007, .12, 1, .6, .92, .8] }, mist = [0, .15, 1, 1, 1, 1, 0];
 const hex3 = h => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
-const ROOM_OF = { z: 'courtyard', m: 'metro', r: 'metro', c: 'catacombs', b: 'cellar', w: 'chateau', k: 'chateau', g: 'courtyard', o: 'courtyard', i: 'workshop' };
+const RAIN = LEVEL === 2 ? 1 : 0, storm = { flash: 0, next: 6 };              // it is raining on the roofs, and there is lightning about
+const ROOM_OF = { z: 'roofs', m: 'metro', r: 'metro', c: 'catacombs', b: 'cellar', w: 'chateau', k: 'chateau', g: 'courtyard', o: 'courtyard', i: 'workshop' };
 const STEP_ON = { z: 'metal', m: 'tile', r: 'stone', c: 'earth', b: 'stone', w: 'wood', k: 'carpet', g: 'grass', o: 'stone', i: 'metal' };
 
 // ---------- helpers ----------
@@ -1167,6 +1168,8 @@ function update(dt) {
   P.bob += P.speed * dt * 0.06;                                                                          // the stride: the view, the gun and the footsteps all keep time with it
   P.heat = enemies.some(e => !e.dead && e.awake && e.see) ? 4 : Math.max(0, (P.heat || 0) - dt);            // the fight music holds for a few seconds after the last machine loses sight of you
   if (snd) { snd.mood(P.heat > 0); snd.room(ROOM_OF[here === 'D' ? doorAt(Math.floor(P.x / CS), Math.floor(P.y / CS)).floor : here]); if (!muted) { snd.tick(dt); if (Math.floor(P.bob / Math.PI) !== Math.floor(was / Math.PI) && STEP_ON[here]) snd.step(STEP_ON[here], Math.floor(P.bob / Math.PI) & 1 ? .18 : -.18); } }   // a footfall each time the stride lands
+  if (RAIN) { storm.flash = Math.max(0, storm.flash - dt * 5);                                              // lightning: two flickers and, a moment later, the thunder
+    if ((storm.next -= dt) <= 0) { storm.next = rand(9, 22); storm.flash = 1; setTimeout(() => { storm.flash = Math.max(storm.flash, .8); }, 130); setTimeout(() => sfx('thunder'), rand(500, 1900)); } }
   P.bootT = Math.max(0, P.bootT - dt); P.nadeT = Math.max(0, P.nadeT - dt); P.lunge = Math.max(0, P.lunge - dt * 4); darkT = Math.max(0, darkT - dt);
   if (P.reload > 0 && (P.reload -= dt) <= 0) { P.reload = 0; P.mag[P.weapon] = Math.min(MAG[P.weapon], P.ammo[WEAPONS[P.weapon].ammo]); sfx('click'); }
   P.away = P.away || [0, 0, 0, 0]; for (let i = 0; i < 4; i++) { const full = Math.min(MAG[i], P.ammo[WEAPONS[i].ammo]); if (i === P.weapon || P.mag[i] >= full) P.away[i] = 0; else if ((P.away[i] += dt) > 1.4) P.mag[i] = full; }   // a gun put away is reloaded by the time you want it again: switching beats waiting
@@ -1300,7 +1303,7 @@ function update(dt) {
 const scene = document.getElementById('scene'), R = AutomatesRenderer(scene, SIZE, GW, GH);
 if (R) { R.setLightMap(LMU8, LW); R.setFarMap(FARM, LW); R.setGround(GROUND, 2 * WV); }
 const cubeBuf = new Float32Array(4096 * 8), smokeBuf = new Float32Array(512 * 8), cellBuf = new Uint8Array(GW * GH * 4);
-const FLOOR_SHINE = { z: .5, m: .8, r: .15, b: .12, w: .45, o: .1, i: .6 };           // how polished each floor is
+const FLOOR_SHINE = { z: .55, m: .8, r: .15, b: .12, w: .45, o: .1, i: .6 };           // how polished each floor is
 // small particles are drawn as instanced cubes: size, r, g, b, glow
 const PARTICLE = { a_casing: [.42, .86, .68, .24, 0], a_hull: [.6, .72, .13, .1, 0], a_sparkle: [.4, 1, .95, .7, 1], a_ember: [.36, 1, .55, .17, 1], a_oil: [.55, .09, .07, .055, 0], a_bit: [.7, .88, .73, .27, 0], a_hole: [.6, .05, .045, .04, 0], a_smoke: [1.5, 1, .68, .25, 1] };
 function render(now) {
@@ -1379,7 +1382,10 @@ function render(now) {
     else if (p.tip) { if (vis(p.x, p.y, 14)) { R.draw(mesh(p.model), M4(p.x, p.y, p.lift + 1.5, p.a, p.tip * 1.5 * Math.min(1, p.t * 2.5), p.base + 1.5), VOX); n++; } }   // a falling part tips over as it goes
     else draw(p.model, p.x, p.y, p.rot != null ? p.rot : p.a, p.lift);
   }
-  for (let i = 0; i < 70; i++) {                                                                           // dust hanging in the air: it shows only where a lamp catches it
+  if (RAIN) for (let i = 0; i < 70; i++) {                                                                 // where the drops land
+    const f = Math.floor(time * 11 + i * .37), h1 = Math.sin(i * 127.1 + f * 31.7) * 43758.5453, h2 = Math.sin(i * 311.7 + f * 17.3) * 43758.5453, x = P.x + ((h1 - Math.floor(h1)) - .5) * 190, y = P.y + ((h2 - Math.floor(h2)) - .5) * 190, t = tile(Math.floor(x / CS), Math.floor(y / CS));
+    if (t !== 'z') continue; const a = (time * 11 + i * .37) % 1, hz = heightAt(x, y); cube([.2, .75, .82, .95, .5], x, y, hz + .2 + a * 1.1); cube([.13, .75, .82, .95, .5], x + .8, y - .5, hz + .2 + a * .7); }
+  if (!RAIN) for (let i = 0; i < 70; i++) {                                                                // dust hanging in the air: it shows only where a lamp catches it
     const h1 = Math.sin(i * 127.1) * 43758.5453, h2 = Math.sin(i * 311.7) * 43758.5453, h3 = Math.sin(i * 74.7) * 43758.5453, u = h1 - Math.floor(h1), w2 = h2 - Math.floor(h2), q = h3 - Math.floor(h3);
     const wrap = (v, c) => ((v - c) % 160 + 240) % 160 - 80 + c, x = wrap(u * 160 + Math.sin(time * .21 + i) * 6 + time * 1.4, P.x), y = wrap(w2 * 160 + Math.cos(time * .17 + i * 2) * 6, P.y);
     if (!isFloor(tile(Math.floor(x / CS), Math.floor(y / CS)))) continue; const l = lightAt(x, y), b = Math.min(1, (l[0] + l[1] + l[2]) * .5); if (b < .25) continue;
@@ -1427,7 +1433,7 @@ function render(now) {
   for (const e of enemies) if (!e.dead) bodies.push([Math.hypot(e.x - P.x, e.y - P.y), e.x, e.y, e.r * 1.05, e.z + (e.fly || 0) + (RIG[e.type] ? RIG[e.type].H : MODEL_DEFS[e.type + '_i'].H) * VOX]);
   if (R.fast) for (const d of decor) if (!d.gone && d.solid && d.r >= 2) bodies.push([Math.hypot(d.x - P.x, d.y - P.y), d.x, d.y, Math.min(d.r, 6), MODEL_DEFS[d.model].H * (MODEL_DEFS[d.model].o ? MODEL_DEFS[d.model].o.vox : 1)]);   // (with full lighting the furniture casts its true shadow instead)
   bodies.sort((a, b) => a[0] - b[0]);
-  R.end({ lights: ls, bodies: bodies.slice(0, 10).map(b => b.slice(1)), fog: [.04, .035, .05, 120], sky: LEVEL === 2 || 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))), time, dim: (.25 + .75 * dim) * (P.escape ? .7 + .3 * Math.sin(time * 13) : 1), mist: mist.slice(0, 3).concat(mist[2]).map((v, i) => i === 2 ? mist[6] : v), mistc: mist.slice(3, 6), kinds: kindCols(time), smoke: smokeBuf, smokeCount: ns, grade: (g => { for (let i = 0; i < 4; i++) grade[i] += (g[i] - grade[i]) * .04; return grade; })(P.escape ? [1.25, .92, .85, 1.15] : GRADE[ROOM_OF[tile(Math.floor(P.x / CS), Math.floor(P.y / CS))]] || [1, 1, 1, 1]) });
+  R.end({ lights: ls, bodies: bodies.slice(0, 10).map(b => b.slice(1)), fog: [.04, .035, .05, 120], sky: LEVEL === 2 || 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))), time, dim: (1 + storm.flash * 2.2) * (.25 + .75 * dim) * (P.escape ? .7 + .3 * Math.sin(time * 13) : 1), mist: mist.slice(0, 3).concat(mist[2]).map((v, i) => i === 2 ? mist[6] : v), mistc: mist.slice(3, 6), kinds: kindCols(time), rain: [RAIN, storm.flash, 0], smoke: smokeBuf, smokeCount: ns, grade: (g => { for (let i = 0; i < 4; i++) grade[i] += (g[i] - grade[i]) * .04; return grade; })(P.escape ? [1.25, .92, .85, 1.15] : GRADE[ROOM_OF[tile(Math.floor(P.x / CS), Math.floor(P.y / CS))]] || [1, 1, 1, 1]) });
   if (own) Object.assign(P, own);
   if (P.escape) $('cap').textContent = `ÉVACUEZ · 0:${String(Math.max(0, Math.ceil(P.escape))).padStart(2, '0')}`; else if (state !== 'intro' && $('cap').textContent) $('cap').textContent = '';
   $('stats').textContent = `${n} draws, ${Math.round(R.stats.tris / 1000)}k triangles.`;
