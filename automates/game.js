@@ -59,11 +59,12 @@ place('T', 'I', [[18, 1], [22, 2]]); place('Y', 'I', [[19, 0], [21, 0]]); place(
 const FLOORS = 'mrcbwkgoiDz.', isFloor = t => FLOORS.includes(t);
 const WALL_BASE = { P: 'M', N: 'M', L: 'M', V: 'B', F: 'W', X: 'S', G: 'I', T: 'I', Y: 'I',
   0: 'M', 1: 'M', 2: 'M', 3: 'M', 4: 'M', 5: 'M', 6: 'M', 7: 'M', 8: 'C', 9: 'C', A: 'C', E: 'C', J: 'B', O: 'B', Q: 'B', R: 'B',   // posters, a map, a clock, a hose reel, a ticket window, a sign, a telephone; a plaque, a candle niche, a gate, bones; a tun, a slate, hooks, bottles
-  Z: 'W', a: 'W', d: 'W', e: 'W', f: 'S', h: 'S', j: 'S', n: 'S', p: 'I', q: 'I', s: 'I', t: 'I' };                              // books, a mirror, a fireplace, the Baron; a fountain, ivy, a door, a bust; gears, a blueprint, a switchboard, tools
+  Z: 'W', a: 'W', d: 'W', e: 'W', f: 'S', h: 'S', j: 'S', n: 'S', p: 'I', q: 'I', s: 'I', t: 'I',
+  l: 'S', u: 'S', v: 'S', x: 'S' };                                                                             // on the roofs: an access door, a lit dormer, a louvre and its stovepipe, a junction box                              // books, a mirror, a fireplace, the Baron; a fountain, ivy, a door, a bust; gears, a blueprint, a switchboard, tools
 // Dressing the walls: the hand-placed pieces above stay where they are, and most of the plain wall that faces a floor is then
 // given something from its room's stock, chosen by position so that a level is the same every time and neighbours differ.
-const STOCK2 = { M: '025673', C: '8E', B: 'OQR', W: 'aeF', S: 'hn', I: 'pqst' }, wallHash = (x, y) => (Math.imul(x + 11, 73856093) ^ Math.imul(y + 7, 19349663)) >>> 0;   // the smaller pieces, for the second half of a stretch of wall
-{ const STOCK = { M: '000111223345556667777PPN', C: '88899AEEE', B: 'JJOOQQQRRRV', W: 'ZZZaadeFF', S: 'fhhhhjnn', I: 'pppqqssttG' }, last = {}, HOME = { M: 'mr', C: 'c', B: 'b', W: 'wk', S: 'go', I: 'i' };
+const STOCK2 = { M: '025673', C: '8E', B: 'OQR', W: 'aeF', S: LEVEL === 1 ? 'hn' : 'vx', I: 'pqst' }, wallHash = (x, y) => (Math.imul(x + 11, 73856093) ^ Math.imul(y + 7, 19349663)) >>> 0;   // the smaller pieces, for the second half of a stretch of wall
+{ const STOCK = { M: '000111223345556667777PPN', C: '88899AEEE', B: 'JJOOQQQRRRV', W: 'ZZZaadeFF', S: LEVEL === 1 ? 'fhhhhjnn' : 'luuuvvxxl', I: 'pppqqssttG' }, last = {}, HOME = { M: 'mr', C: 'c', B: 'b', W: 'wk', S: 'goz', I: 'iz' };
   for (let y = 0; y < DH; y++) for (let x = 0; x < DW; x++) { const t = tiles[y][x], pool = STOCK[t]; if (!pool) continue;
     const faces = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => (tiles[y + b] || [])[x + a]).filter(f => f && isFloor(f) && f !== 'D');
     if (!faces.length || faces.some(f => !HOME[t].includes(f))) continue;      // only walls that face their own room: a wine tun does not belong on the workshop's side of the cellar wall
@@ -74,7 +75,7 @@ const STOCK2 = { M: '025673', C: '8E', B: 'OQR', W: 'aeF', S: 'hn', I: 'pqst' },
 { const plan = tiles.map(row => row.slice()), at = (x, y) => (plan[y] || [])[x] || ' ';
   tiles.length = 0;
   for (let y = 0; y < GH; y++) tiles.push(Array.from({ length: GW }, (_, x) => { const t = plan[y >> 1][x >> 1]; if (!WALL_BASE[t] || !((x + y) & 1)) return t; const b = WALL_BASE[t], h = wallHash(x * 3 + 1, y * 5 + 2), s = STOCK2[b], k = s[(h >>> 8) % s.length];   // the other half of each decorated stretch: plain, or one of the smaller pieces
-    return LEVEL === 1 && h % 100 < 55 && k !== t ? k : b; }));
+    return h % 100 < 55 && k !== t ? k : b; }));
   for (const d of doors) {
     d.vertical = !isFloor(at(d.cx - 1, d.cy)); d.floor = d.vertical ? at(d.cx, d.cy - 1) : at(d.cx - 1, d.cy);
     const X = d.cx * K, Y = d.cy * K;
@@ -294,7 +295,7 @@ const GROUND = [], FLOOR_L = new Uint8Array(GW * GH).fill(255), CEIL_L = new Uin
   const layer = (name, paint) => { if (seen[name] == null) { const cv = mkCanvas(TS, TS), c = cv.getContext('2d'); paint(c); seen[name] = GROUND.push(c.getImageData(0, 0, TS, TS).data) - 1; } return seen[name]; };
   const art = (name, over) => layer(name + (over ? over.name : ''), c => { const r = ART.rects[name]; if (r) c.drawImage(atlasCv, r[0], r[1], TS, TS, 0, 0, TS, TS); else { c.fillStyle = '#c040c0'; c.fillRect(0, 0, TS, TS); } if (over) over(c); });
   const dark = layer('dark', c => { c.fillStyle = '#14110f'; c.fillRect(0, 0, TS, TS); });                // under and over the walls, so a recessed wall never shows a gap
-  const FLOOR_ART = { m: 'metro', r: 'rails', c: 'earth', b: 'flag', w: 'parquet', k: 'carpet', g: 'lawn', o: 'cobble', i: 'plate', z: 'plate' };
+  const FLOOR_ART = { m: 'metro', r: 'rails', c: 'earth', b: 'flag', w: 'parquet', k: 'carpet', g: 'lawn', o: 'cobble', i: 'plate', z: 'zinc' };
   const CEIL_ART = { m: 'metro', r: 'metro', c: 'stone', b: 'brick', w: 'salon', k: 'salon', i: 'iron' };
   // A cell on an even column shows the left half of its picture and one on an odd column the right half, so a border drawn on
   // both sides of a picture serves the cells along either edge of a room.
@@ -474,6 +475,18 @@ lathe('a_wine', sprite('wine')); lathe('a_lamp', sprite('lamp')); lathe('a_drum'
 box('a_cask', sprite('cask'), 44); lathe('a_table', sprite('table')); box('a_exit', sprite('exit'), 28);
 lathe('a_chandelier', sprite('chandelier')); box('a_arch', sprite('arch', WV + 6, LOWC * VPU), 12); box('a_rack', sprite('rack'), 40); box('a_workbench', sprite('workbench'), 16); box('a_train', sprite('train'), 36);
 for (const [n, depth] of [['kiosk', 26], ['suitcases', 26], ['trolley', 30], ['barrow', 24], ['bottles', 30], ['armchair', 38], ['armour', 14], ['clock', 20], ['anvil', 16], ['repair', 16]]) box('a_' + n, sprite(n), depth);   // the second set of furniture: flat-sided things are extruded,
+{ const s = sprite('skylight'), m = (s.w - 1) / 2; model('a_skylight', s.w, s.w, s.h, (x, y, z) => { const a = s.c[z * s.w + x], b = s.c[z * s.w + y]; return a < 0 || b < 0 ? null : Math.abs(y - m) >= Math.abs(x - m) ? a : b; }); }   // a skylight is a pyramid: the same glazed face on all four sides
+for (const [n, depth] of [['chimney', 28], ['coop', 30], ['cafe', 26], ['washing', 3], ['aerial', 4], ['zincstack', 28]]) box('a_' + n, sprite(n), depth);   // the roofs' furniture
+for (const n of ['vent', 'tank', 'searchlight']) lathe('a_' + n, sprite(n));
+// The airship is a side view blown up into the round: every column of the picture becomes a disc of its own height, so the hull is a
+// true cigar and the fins stay flat. It hangs over the mooring house at twice the scale of anything on the roofs.
+{ const s = sprite('airship'), lo = new Int16Array(s.w).fill(-1), hi = new Int16Array(s.w).fill(-1); for (let x = 0; x < s.w; x++) for (let z = 0; z < s.h; z++) if (s.c[z * s.w + x] >= 0) { if (lo[x] < 0) lo[x] = z; hi[x] = z; }
+  const fin = Math.round(s.w * .16), L = s.h;
+  model('a_airship', s.w, L, s.h, (x, y, z) => { if (lo[x] < 0 || z < lo[x] || z > hi[x]) return null; const k = s.c[z * s.w + x]; if (k < 0) return null;
+    if (x < fin) return Math.abs(y - L / 2) < 2 ? k : null;                                               // the tail: flat fins
+    const r = (hi[x] - lo[x] + 1) / 2, dz = z + .5 - (lo[x] + hi[x] + 1) / 2, dy = y + .5 - L / 2; return dz * dz + dy * dy <= r * r ? k : null; }, .85);
+  const gs = sprite('gondola'); model('a_gondola', gs.w, 12, gs.h, (x, y, z) => { const k = gs.c[z * gs.w + x]; return k < 0 ? null : y === 0 || y === 11 ? k : shade(k, .85); }, .85);
+  const ms = sprite('mast'), mid = ms.w >> 1; model('a_mast', ms.w, ms.w, ms.h, (x, y, z) => { const a = ms.c[z * ms.w + x], b = ms.c[z * ms.w + y]; return (y === mid || y === mid - 1) && a >= 0 ? a : (x === mid || x === mid - 1) && b >= 0 ? b : null; }, .5); }   // the mast: the same lattice seen from the front and from the side, crossed
 box('a_turnstile', sprite('turnstile'), 14); box('a_sarcophagus', sprite('sarcophagus'), 30); box('a_well', sprite('well'), 40); for (const n of ['booth', 'monument']) lathe('a_' + n, sprite(n));
 for (const n of ['scale', 'morris', 'bones', 'candles', 'sacks', 'globe', 'palm', 'coil', 'urn', 'statue']) lathe('a_' + n, sprite(n));                                                                                    // round ones are turned
 for (const n of ['paper', 'manhole', 'drain', 'boneheap', 'spill', 'straw', 'rug', 'rug2', 'leaves', 'oil', 'plans', 'cable']) { const s = sprite('flat_' + n); model('f_' + n, s.w, s.h, 1, (x, y) => { const k = s.c[y * s.w + x]; return k < 0 ? null : k; }); }   // things lying on the floor: one voxel thick, drawn from above
@@ -520,10 +533,12 @@ for (const [cx, cy, hang] of [[4, 2, LOWC], [6, 8, LOWC], [17, 20, 21], [23, 16,
 for (const [cx, cy] of [[20, 9], [18, 3], [22, 3]]) FIX.push({ model: 'a_chandelier', ...C(cx, cy), hang: WH, z: WH - 8, R: 120, I: .55, col: WARM });
 for (const [cx, cy, ox] of [[26, 9, -4], [33, 9, 4], [28, 5, 0], [32, 13, 0]]) FIX.push({ model: 'a_lamp', ...C(cx, cy, ox, -5), z: 16, R: 88, I: .85, col: WARM });
 } else for (const [cx, cy] of [[4, 24], [8, 27], [15, 24], [19, 21], [24, 20], [30, 25], [27, 19], [16, 6], [22, 12], [26, 5], [20, 6], [24, 15], [11, 25]]) { const p = C(cx, cy, 4, 4); FIX.push({ model: 'a_lamp', ...p, z: heightAt(p.x, p.y) + 16, R: 95, I: .9, col: WARM }); }   // street lamps along the roofs
+if (LEVEL === 2) { for (const [cx, cy] of [[8, 25], [17, 24], [26, 24], [20, 7], [17, 11], [24, 10]]) { const p = C(cx, cy, 2, 2); FIX.push({ model: 'a_skylight', ...p, z: heightAt(p.x, p.y) + 9, R: 80, I: .8, col: WARM }); }   // skylights: the rooms below are lit
+  for (const [cx, cy] of [[20, 21], [31, 19], [17, 4], [23, 4]]) { const p = C(cx, cy, 4, -4); FIX.push({ model: 'a_searchlight', ...p, z: heightAt(p.x, p.y) + 17, R: 110, I: .8, col: COLD }); } }
 const lights = FIX.map(f => ({ x: f.x, y: f.y, z: f.z, R: f.R, I: f.I, col: f.col, flick: f.flick, air: 1 }));
 const FARK = 1.55 * .48;                                                      // how much of a lamp's direct light the far map carries
 for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {            // sconces, lit windows and Tesla tubes on the walls
-  const t = tile(cx, cy), k = { L: [60, .65, WARM], X: [56, .5, WARM], T: [62, .6, COLD], Y: [62, .5, COLD], 9: [40, .5, AMBER], d: [64, .7, AMBER] }[t];
+  const t = tile(cx, cy), k = { L: [60, .65, WARM], X: [56, .5, WARM], T: [62, .6, COLD], Y: [62, .5, COLD], 9: [40, .5, AMBER], d: [64, .7, AMBER], u: [52, .55, WARM], l: [44, .45, WARM] }[t];
   if (k) for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isFloor(tile(cx + sx, cy + sy)) && faceOf(t, cx, cy, sx, sy) === t) lights.push({ x: cx * CS + 8 + sx * 11, y: cy * CS + 8 + sy * 11, z: 13 + Math.max(0, baseAt(cx + sx, cy + sy)), R: k[0], I: k[1], col: k[2], air: .5 });
 }
 for (let j = 1; j < GH; j += 2) for (let i = 1; i < GW; i += 2) {            // the lamps painted on the flat ceilings sit where four cells meet
@@ -752,6 +767,22 @@ function reset() {
   E('scaphandre', 20, 8); E('automate', 15, 5); E('automate', 26, 5); E('lanterne', 18, 12); E('lanterne', 23, 12); I('shells', 14, 13); I('bullets', 27, 13); I('baguette', 14, 4); I('wine', 27, 4); I('cells', 22, 5); I('grenades', 18, 5);
   D('a_crate', 15, 12); D('a_crate', 26, 12, 0, 0, { rot: .5 }); for (const [x, y] of [[18, 9], [22, 9]]) D('a_drum', x, y, 0, 0, { drum: true, hp: 12 });
   decor.push({ model: 'a_exit', ...C(20, 1, 0, -3), r: 5, solid: true, rot: 0, exit: true });
+  // What a roof carries: chimneys, tanks and coops round its edges, washing and a cafe table where someone lives below, and the litter of the roofers.
+  { const Q = Math.PI / 2; let seed = 11; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    const F = (n, cx, cy, ox = 0, oy = 0, rot) => decor.push({ model: 'f_' + n, ...C(cx, cy, ox, oy), r: 0, solid: false, rot: rot == null ? rnd() * 6.28 : rot, lift: 0, flat: true });
+    for (const [x, y, ox, oy] of [[2, 22, -4, -4], [9, 28, 4, 4], [13, 20, -4, -4], [20, 28, 4, 4], [22, 27, -4, 4], [31, 27, 4, 4], [14, 4, -4, -4], [27, 4, 4, -4], [14, 13, -4, 4], [27, 9, 4, 0], [22, 18, -4, -4]]) D('a_chimney', x, y, ox, oy, { r: 5 });
+    for (const [x, y, ox, oy] of [[9, 23, 4, 0], [20, 20, 4, -4], [31, 18, 4, -4], [15, 8, -4, 0], [26, 12, 4, 4]]) D('a_tank', x, y, ox, oy, { r: 7 });
+    for (const [x, y, ox, oy] of [[6, 22, 0, -4], [2, 27, -4, 0], [16, 28, 0, 4], [13, 23, -4, 0], [28, 18, 0, -4], [31, 23, 4, 0], [19, 13, 0, 4], [14, 9, -4, 0], [27, 6, 4, 0], [22, 13, 0, 4]]) D('a_vent', x, y, ox, oy, { r: 3 });
+    D('a_coop', 8, 22, 0, -4, { r: 5 }); D('a_coop', 25, 27, 0, 4, { r: 5 }); D('a_coop', 14, 6, -4, 0, { r: 5, rot: Q });
+    D('a_cafe', 3, 23, 0, 0, { r: 5, hp: 14 }); D('a_cafe', 30, 21, 0, 0, { r: 5, hp: 14 }); D('a_cafe', 15, 21, 2, 2, { r: 5, hp: 14 });
+    D('a_washing', 4, 28, 4, 4, { r: 2, solid: false }); D('a_washing', 15, 28, 4, 4, { r: 2, solid: false }); D('a_washing', 29, 27, 0, 4, { r: 2, solid: false }); D('a_washing', 27, 13, -4, 4, { r: 2, solid: false }); D('a_washing', 2, 24, -4, 0, { r: 2, solid: false, rot: Q });
+    for (const [x, y, ox, oy] of [[9, 26, 4, 0], [13, 28, -4, 4], [22, 22, -4, 0], [16, 4, 0, -4], [25, 4, 0, -4]]) D('a_aerial', x, y, ox, oy, { r: 1.5, rot: x * .7 });
+    for (const [x, y, ox, oy] of [[5, 27, 2, 2], [18, 21, 0, -4], [23, 25, -4, 0], [29, 25, 2, 2], [18, 8, -2, 2], [23, 6, 2, 0]]) D('a_zincstack', x, y, ox, oy, { r: 5, rot: x * 1.3 });
+    for (const [x, y, ox, oy] of [[3, 25, 1, 1], [7, 27, -2, 0], [8, 24, 2, 2], [11, 25, 0, 1], [14, 24, 1, 0], [17, 27, 0, 2], [19, 23, 2, 1], [23, 20, 1, 1], [26, 26, 0, 1], [30, 24, -1, 2], [28, 19, 2, 0], [24, 16, 0, 1], [16, 9, 1, 2], [20, 12, -2, 1], [25, 7, 1, 0], [21, 5, 0, 2], [17, 12, 2, 0]]) F(['leaves', 'paper', 'leaves', 'cable', 'oil'][(x + y) % 5], x, y, ox, oy);
+    for (const [x, y] of [[5, 24], [16, 25], [25, 22], [20, 9], [23, 9]]) F('drain', x, y, 2, 2, 0);
+    for (const [x, y] of [[16, 23], [18, 26], [26, 21], [28, 24], [24, 25], [17, 7], [24, 7], [20, 10], [5, 25], [16, 10], [25, 11]]) { const p = C(x, y, 2, 2); decor.push({ model: 'a_chimney', x: (x + .5) * DS, y: (y + .5) * DS, r: 0, solid: false, rot: (x & 1) * Q, lift: heightAt(p.x, p.y) + WH, top: 1e9 }); }   // pots on every stack
+    decor.push({ model: 'a_mast', x: 20.5 * DS, y: 1.5 * DS, r: 0, solid: false, rot: 0, lift: LEVELS[2] + WH, top: 1e9, big: true });
+    decor.push({ model: 'a_airship', x: 20.5 * DS + 108, y: 1.5 * DS, r: 0, solid: false, rot: 0, lift: LEVELS[2] + WH + 58, top: 1e9, big: true }); decor.push({ model: 'a_gondola', x: 20.5 * DS + 96, y: 1.5 * DS, r: 0, solid: false, rot: 0, lift: LEVELS[2] + WH + 45, top: 1e9, big: true }); }   // moored by the nose, riding above the mast's beacon
   }
   P = { ...(LEVEL === 1 ? C(2, 26) : C(3, 26)), yaw: 0, pitch: 0, punch: 0, speed: 0, sprint: 0, dipT: 0, hits: [], hitT: 0, hitKill: false, vx: 0, vy: 0, hp: 100, armour: 0, ammo: { bullets: 50, shells: 0, cells: 0 }, has: [true, false, false, false], weapon: 0, cool: 0, kick: 0, shake: 0, flash: 0, bob: 0, keys: {}, pain: 0, dead: false, grin: 0,
     mag: MAG.slice(), reload: 0, grenades: 2, bootT: 0, nadeT: 0, lunge: 0, picked: null, escape: 0 };
@@ -1284,7 +1315,10 @@ function render(now) {
   for (const e of extras) if (vis(e.x, e.y, e.r)) { R.draw(e.far && (P.x - e.x) ** 2 + (P.y - e.y) ** 2 > ((e.near || 150) * lod) ** 2 ? e.far : e.m, e.M, e.vox || VOX); n++; }                        // the track and the vault
   for (const h of hedges) if (vis(h.x, h.y, 14)) { R.draw(mesh('hedge'), h.M, VOX); n++; }
   for (const d of doors) { const name = d.key === 'secret' ? 'a_door_secret_' + (d.floor === 'k' ? 'W' : d.floor.toUpperCase()) : d.key ? 'a_door_' + d.key : 'a_door'; for (const sg of [-1, 1]) { const o = sg * (8 + d.open * 15); draw(name, d.x + (d.vertical ? o : 0), d.y + (d.vertical ? 0 : o), d.vertical ? 0 : Math.PI / 2, d.z); } }   // the two leaves slide apart into the walls
-  for (const d of decor) if (!d.gone) { if (d.swing && vis(d.x, d.y, 8)) { R.draw(mesh(d.model), M4(d.x, d.y, d.lift, d.rot, Math.sin(time * 1.4 + d.x * .3) * .09, d.swing), VOX); n++; } else draw(d.model, d.x, d.y, d.rot, (d.lift || 0) + (d.z || 0)); }
+  for (const d of decor) if (d.big) {                                                                       // the airship and its mast are seen from every roof: past the edge of the drawn world they are brought in along the line of sight and shrunk to match
+    const ez = FP.eye + P.z, dist = Math.hypot(d.x - P.x, d.y - P.y, d.lift - ez), k = Math.min(1, 440 / dist), def = MODEL_DEFS[d.model];
+    R.tint(1, 1, 1, .22); R.draw(mesh(d.model), M4(P.x + (d.x - P.x) * k, P.y + (d.y - P.y) * k, ez + (d.lift - ez) * k, d.rot), def.o.vox * k); R.tint(); n++; }
+  for (const d of decor) if (!d.gone && !d.big) { if (d.swing && vis(d.x, d.y, 8)) { R.draw(mesh(d.model), M4(d.x, d.y, d.lift, d.rot, Math.sin(time * 1.4 + d.x * .3) * .09, d.swing), VOX); n++; } else draw(d.model, d.x, d.y, d.rot, (d.lift || 0) + (d.z || 0)); }
   for (const it of items) { const k = PICK[it.kind], bob = Math.sin(now * 0.004 + it.x) * 1.2, z = (it.z || 0) + 4 + bob; draw(k.model, it.x, it.y, now * 0.002, z);
     const c = k.glow || [1, .85, .4]; for (let i = 0; i < 4; i++) { const a = now * 0.003 + i * 1.571 + it.x; cube([.5, c[0], c[1], c[2], 1], it.x + Math.cos(a) * 3.4, it.y + Math.sin(a) * 3.4, (it.z || 0) + 1.6 + Math.sin(a * 2) * .8); } }   // four motes circle each thing worth picking up: green for health, blue for armour, gold for ammunition
   for (const e of enemies) if ((!e.dead || e.dying) && vis(e.x, e.y, 14)) {   // a destroyed machine is only wreckage now, unless it is still falling over

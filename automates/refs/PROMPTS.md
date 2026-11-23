@@ -104,3 +104,13 @@ Four more 16:9 sheets. The floor sheets ask for "six separate flat things lying 
 | `hang2` | run of brass pipes with a valve wheel, ceiling fan, rail of automaton parts, hanging tree roots, crimson banner with a cog emblem |
 
 | `props-centre` | ticket turnstile, octagonal ticket booth, stone sarcophagus, pedestal of stacked skulls with a cross, stone well with a bucket (five free-standing objects, front view, for the middles of the junction and the catacomb rooms) |
+
+## Fourth set: the rooftops (2026-11-23)
+
+| File | Aspect | Objects |
+| --- | --- | --- |
+| `floor-zinc` | 1:1 | seamless zinc roof: blue-grey sheets in long panels with standing seams, staggered cross joints, rivets and rain streaks |
+| `props-roof1` | 16:9 | brick chimney stack with three pots, zinc ventilator, wooden water tank on iron legs, pigeon coop, glowing pyramid skylight |
+| `props-roof2` | 16:9 | cafe table and two chairs, washing line between two poles, radio aerial with a weathercock, searchlight on a tripod, stack of zinc sheets with a toolbox |
+| `decals-roof` | 16:9 | roof-access door with a lamp, lit mansard dormer with a flower box, ventilation louvre with a stovepipe, junction box with cables |
+| `airship` | 16:9 | airship envelope with tail fins (no gondola), gondola cabin with lit windows, iron lattice mooring mast with a red beacon; side view |

@@ -129,9 +129,10 @@ DECALS = [
     ('decals-cellar', [('J', 'B', 54, 4), ('O', 'B', 34, 30), ('Q', 'B', 44, 34), ('R', 'B', 44, 26)]),
     ('decals-chateau2', [('Z', 'W', 48, 0), ('a', 'W', 28, 10), ('d', 'W', 56, 0), ('e', 'W', 44, 32)]),
     ('decals-courtyard', [('f', 'S', 40, 0), ('h', 'S', 44, 0), ('j', 'S', 60, 0), ('n', 'S', 40, 14)]),
+    ('decals-roof', [('l', 'S', 52, 0), ('u', 'S', 50, 12), ('v', 'S', 44, 22), ('x', 'S', 30, 14)]),
     ('decals-workshop2', [('p', 'I', 46, 30), ('q', 'I', 44, 30), ('s', 'I', 40, 28), ('t', 'I', 50, 30)]),
 ]
-LIT = {'L': 'warm', 'X': 'warm', 'T': 'cyan', 'Y': 'cyan', '9': 'warm yellow', 'd': 'warm yellow orange'}
+LIT = {'L': 'warm', 'X': 'warm', 'T': 'cyan', 'Y': 'cyan', '9': 'warm yellow', 'd': 'warm yellow orange', 'u': 'warm yellow', 'l': 'warm yellow'}
 for sheet, objs in DECALS:
     im = load(sheet)
     if not im: continue
@@ -157,7 +158,7 @@ im = load('wall-metro')        # a strip of plain white tiles for the vault
 if im: add('vault', flat(shrink(im.crop((0, int(im.height * .10), im.width // 2, int(im.height * .10) + im.width // 4)), (64, 32)), 16))
 
 # ---- floors and ceilings ----
-for n in ['metro', 'rails', 'earth', 'flag', 'parquet', 'carpet', 'lawn', 'cobble', 'plate']:
+for n in ['metro', 'rails', 'earth', 'flag', 'parquet', 'carpet', 'lawn', 'cobble', 'plate', 'zinc']:
     im = load('floor-' + n)
     if im: add('floor_' + n, flat(shrink(im, (FLOOR, FLOOR)), 48))
 for n, src in [('metro', 'ceil-metro'), ('stone', 'wall-stone'), ('brick', 'wall-brick'), ('salon', 'ceil-salon'), ('iron', 'ceil-iron')]:   # rough stone and brick vaults reuse the wall sheets
@@ -184,12 +185,15 @@ SHEETS = [
     ('props-under', [('bones', 20), ('candles', 24), ('barrow', 26), ('bottles', 22), ('sacks', 26)]),
     ('props-chateau', [('armchair', 46), ('globe', 52), ('armour', 84), ('clock', 92), ('palm', 72)]),
     ('props-workshop', [('coil', 88), ('anvil', 34), ('repair', 84), ('urn', 60), ('statue', 100)]),
+    ('props-roof1', [('chimney', 84), ('vent', 44), ('tank', 124), ('coop', 76), ('skylight', 30)]),
+    ('props-roof2', [('cafe', 44), ('washing', 70), ('aerial', 140), ('searchlight', 72), ('zincstack', 34)]),
+    ('airship', [('airship', 60), ('gondola', 16), ('mast', 150)]),
     ('props-centre', [('turnstile', 46), ('booth', 104), ('sarcophagus', 34), ('monument', 76), ('well', 80)]),
     ('hang1', [('hsign', 44), ('hclock', 44), ('ring', 40), ('hams', 40), ('hoist', 52)]),
     ('hang2', [('pipes', 36), ('fan', 20), ('parts', 46), ('roots', 22), ('banner', 60)]),
     ('train', [('train', 46)]),
 ]
-SHINE = {'booth': 'warm', 'ring': 'warm yellow', 'coil': 'cyan', 'candles': 'warm yellow', 'sauteur': 'red orange', 'garde': 'cyan', 'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
+SHINE = {'skylight': 'warm yellow', 'searchlight': 'cyan', 'gondola': 'warm yellow', 'mast': 'red', 'booth': 'warm', 'ring': 'warm yellow', 'coil': 'cyan', 'candles': 'warm yellow', 'sauteur': 'red orange', 'garde': 'cyan', 'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
          'lamp': 'warm', 'table': 'warm', 'chandelier': 'warm', 'train': 'warm yellow', 'hanglamp': 'warm', 'lantern': 'warm yellow', 'signal': 'red'}
 for sheet, objs in SHEETS:
     im = load(sheet)
