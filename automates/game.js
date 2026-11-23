@@ -288,29 +288,48 @@ function lathe(name, s) {                                                     //
 }
 const box = (name, s, D) => model(name, s.w, D, s.h, (x, y, z) => { const k = s.c[z * s.w + x]; return k < 0 ? null : y === 0 || y === D - 1 ? k : shade(k, .85); });
 // the Baron's machines: frames w and b walk, a attacks
-// The machines. At ease (not yet alerted) each is one model. Once alerted it is three: the upper body with its gun levelled
-// (or firing), and two legs that swing from the hip. _d1 and _d2 are the same upper body with plates shot away.
-const GIBS = {}, HIP = {};
+// The three walking machines are true 3D voxel models, carved from turnaround sheets by tools/build_art.py. Each is split into
+// a torso, two arms and two legs, which move on their own: legs swing from the hip, arms rise from the shoulder to aim, and an
+// arm can be shot off. _d1 and _d2 are the torso with plates shot away. The drone has no limbs and is inflated from its picture.
+const GIBS = {}, RIG = {};
 const battered = (fn, lvl) => (x, y, z) => { const c = fn(x, y, z); if (c == null) return null; const n = noise3(x >> 2, z >> 2, 5) * .7 + noise3(x >> 1, z >> 1, 9) * .3; return n < lvl * .07 ? null : n < lvl * .14 ? shade(c & 0xffffff, .3) : c; };
-for (const [n, T, legs] of [['automate', 12, .36], ['scaphandre', 24, .34], ['colosse', 30, .34], ['lanterne', 0, 0]]) {
-  const thick = s => T || Math.round(s.w * .7), o = s => ({ round: T ? .9 : 1.1, back: ART.rects[n + '_back'] && sprite(n + '_back', s.w, s.h, SPRITE_FLIP) });
-  const pose = k => sprite(ART.rects[n + k] ? n + k : n, 0, 0, SPRITE_FLIP), ease = pose(''), aim = pose('_aim'), shoot = ART.rects[n + '_fire'] ? pose('_fire') : aim;
-  const part = (s, keep) => ({ w: s.w, h: s.h, c: Int32Array.from(s.c, (k, i) => keep(i % s.w, i / s.w | 0) ? k : -1) });   // the same canvas with everything else cut away, so the parts line up
-  const add = (name, s) => { const m = inflate(s, thick(s), o(s)), fn = m.fn(0); model(name, m.W, m.L, m.H, fn); return [m, fn]; };
-  add(`${n}_i`, ease);
-  const hip = HIP[n] = Math.round(aim.h * legs);
-  for (const [k, s] of [['aim', aim], ['fire', shoot]]) { const [m, fn] = add(`${n}_${k}`, part(s, (x, z) => z >= hip)); for (const d of [1, 2]) model(`${n}_${k}_d${d}`, m.W, m.L, m.H, battered(fn, d)); }
-  if (legs) { add(n + '_ll', part(aim, (x, z) => z < hip && x < aim.w / 2)); add(n + '_lr', part(aim, (x, z) => z < hip && x >= aim.w / 2)); }
-  GIBS[n] = [];                                                              // and the chunks it flies apart into
-  const cols = n === 'lanterne' ? 2 : 3, rows = n === 'lanterne' ? 2 : 4, cw = Math.ceil(ease.w / cols), ch = Math.ceil(ease.h / rows);
-  for (let r = 0; r < rows; r++) for (let q = 0; q < cols; q++) {
-    const c = new Int32Array(cw * ch).fill(-1); let px = 0;
-    for (let z = 0; z < ch; z++) for (let x = 0; x < cw; x++) { const X = q * cw + x, Z = r * ch + z; if (X < ease.w && Z < ease.h && (c[z * cw + x] = ease.c[Z * ease.w + X]) >= 0) px++; }
-    if (px < 14) continue;
+function voxels(name) {                                                       // a carved model: colours at [x + W * (y + L * z)], -1 where empty; front is +y
+  const [W, L, H, cols] = ART.vox[name], r = ART.rects['vox_' + name], c = new Int32Array(W * L * H).fill(-1);
+  for (let y = 0; y < L; y++) for (let z = 0; z < H; z++) for (let x = 0; x < W; x++) {
+    const i = ((r[1] + (y / cols | 0) * H + H - 1 - z) * AW + r[0] + (y % cols) * W + (SPRITE_FLIP ? W - 1 - x : x)) * 4;
+    if (AD[i + 3] >= 128) c[x + W * (y + L * z)] = (AD[i + 3] < 230 ? GLOW : SHINY) | AD[i] << 16 | AD[i + 1] << 8 | AD[i + 2];
+  }
+  return { W, L, H, c };
+}
+for (const [n, legs] of [['automate', .4], ['scaphandre', .36], ['colosse', .36]]) {
+  const { W, L, H, c } = voxels(n), hip = Math.round(H * legs), mid = W >> 1;
+  const filled = (x, z) => { for (let y = 0; y < L; y++) if (c[x + W * (y + L * z)] >= 0) return true; return false; };
+  let xl = W * .3 | 0, xr = W * .7 | 0, best = 0;                              // the torso's width: the widest the middle of the outline gets while the arms still hang clear of it
+  for (let z = hip + 1; z < H * .8; z++) {
+    let a = mid, b = mid, runs = 0, on = false; if (!filled(mid, z)) continue;
+    while (a > 0 && filled(a - 1, z)) a--; while (b < W - 1 && filled(b + 1, z)) b++;
+    for (let x = 0; x < W; x++) { const f = filled(x, z); if (f && !on) runs++; on = f; }
+    if (runs >= 3 && b - a > best) { best = b - a; xl = a; xr = b; }
+  }
+  const partOf = (x, z) => z < hip * .6 ? (x < mid ? 'll' : 'lr') : x < xl ? 'al' : x > xr ? 'ar' : z < hip ? (x < mid ? 'll' : 'lr') : 'torso';
+  let sh = hip; for (let z = hip; z < H; z++) for (const x of [xl - 1, xr + 1]) if (x >= 0 && x < W && filled(x, z)) sh = z;   // the shoulders: the highest the arms reach
+  const only = k => (x, y, z) => { const v = c[x + W * (y + L * z)]; return v >= 0 && partOf(x, z) === k ? v : null; };
+  for (const k of ['torso', 'al', 'ar', 'll', 'lr']) model(`${n}_${k}`, W, L, H, only(k));
+  for (const d of [1, 2]) model(`${n}_torso_d${d}`, W, L, H, battered(only('torso'), d));
+  RIG[n] = { H, hip: hip * VOX, sh: (sh - 2) * VOX, ax: [(xl - W / 2) * VOX, (xr + 1 - W / 2) * VOX], gun: n === 'automate' ? [0] : [0, 1] };   // gun: which arms it fires with
+}
+{ const n = 'lanterne', thick = s => Math.round(s.w * .7), pose = k => sprite(ART.rects[n + k] ? n + k : n, 0, 0, SPRITE_FLIP), ease = pose(''), back = ART.rects[n + '_back'];
+  const add = (name, s) => { const m = inflate(s, thick(s), { round: 1.1, back: back && sprite(n + '_back', s.w, s.h, SPRITE_FLIP) }), fn = m.fn(0); model(name, m.W, m.L, m.H, fn); return [m, fn]; };
+  add(n + '_i', ease);
+  for (const [k, s] of [['aim', pose('_aim')], ['fire', pose('_fire')]]) { const [m, fn] = add(`${n}_${k}`, s); for (const d of [1, 2]) model(`${n}_${k}_d${d}`, m.W, m.L, m.H, battered(fn, d)); }
+  GIBS[n] = [];                                                              // the chunks it flies apart into
+  const cw = Math.ceil(ease.w / 2), ch = Math.ceil(ease.h / 2);
+  for (let r = 0; r < 2; r++) for (let q = 0; q < 2; q++) {
+    const c = new Int32Array(cw * ch).fill(-1);
+    for (let z = 0; z < ch; z++) for (let x = 0; x < cw; x++) { const X = q * cw + x, Z = r * ch + z; if (X < ease.w && Z < ease.h) c[z * cw + x] = ease.c[Z * ease.w + X]; }
     const m = inflate({ w: cw, h: ch, c }, Math.max(4, Math.round(thick(ease) * .6)), { even: true }), name = `${n}_g${GIBS[n].length}`;
     model(name, m.W, m.L, m.H, m.fn(0)); GIBS[n].push({ name, dx: ((q + .5) * cw - ease.w / 2) * VOX, dz: r * ch * VOX });
-  }
-}
+  } }
 box('a_door', sprite('door', CS * VPU, WH * VPU), 16); box('a_door_red', sprite('door_red', CS * VPU, WH * VPU), 16); box('a_door_blue', sprite('door_blue', CS * VPU, WH * VPU), 16);
 box('a_key_red', sprite('key_red'), 3); box('a_key_blue', sprite('key_blue'), 3); box('a_baguette', sprite('baguette'), 10);
 for (const n of ['bullets', 'shells', 'cells']) { const s = sprite(n); box('a_' + n, s, Math.round(s.w * .7)); }
@@ -380,6 +399,11 @@ const M4 = (x, y, z, rot, tilt = 0, pz = 0, py = 0) => {
   const c = Math.cos(rot), s = Math.sin(rot), ct = Math.cos(tilt), st = Math.sin(tilt), ty = py - py * ct + pz * st, tz = pz - py * st - pz * ct;
   return new Float32Array([c, s, 0, 0, -s * ct, c * ct, st, 0, s * st, -c * st, ct, 0, x - s * ty, y + c * ty, z + tz, 1]);
 };
+const mmul = (a, b) => { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]; return o; };
+const mT = (x, y, z) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1];
+const mRX = a => { const c = Math.cos(a), s = Math.sin(a); return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]; };   // positive swings a hanging limb forwards
+const mRZ = a => { const c = Math.cos(a), s = Math.sin(a); return [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; };
+const about = (x, y, z, R) => mmul(mT(x, y, z), mmul(R, mT(-x, -y, -z)));           // turn about a joint
 for (const p of panels) p.M = M4(p.x, p.y, p.lift, p.rot);
 for (const p of posts) p.M = M4(p.x, p.y, 0, 0);
 for (const e of extras) e.M = M4(e.x, e.y, e.lift, 0);
@@ -408,7 +432,7 @@ function reset() {
   enemies = []; items = []; decor = []; shots = []; fx = []; debris = []; logLines = [];
   for (const d of doors) { d.open = 0; d.hold = 0; d.unlocked = !d.key; }
   for (const p of damaged.splice(0)) restore(p);                                                         // the walls are whole again
-  const E = (type, cx, cy, ox, oy) => enemies.push({ type, ...C(cx, cy, ox, oy), ...ENEMY[type], hp0: ENEMY[type].hp, yaw: 0, awake: false, cool: 1 + rnd(), t: rnd() * 5, seeT: rnd() * .2, see: false, flash: 0, atk: 0, strafe: rnd() < .5 ? 1 : -1 });
+  const E = (type, cx, cy, ox, oy) => enemies.push({ type, ...C(cx, cy, ox, oy), ...ENEMY[type], hp0: ENEMY[type].hp, arm: [1, 1], aim: 0, yaw: 0, awake: false, cool: 1 + rnd(), t: rnd() * 5, seeT: rnd() * .2, see: false, flash: 0, atk: 0, strafe: rnd() < .5 ? 1 : -1 });
   const I = (kind, cx, cy, ox, oy) => items.push({ kind, ...C(cx, cy, ox, oy) });
   const D = (model, cx, cy, ox = 0, oy = 0, o = {}) => decor.push({ model, ...C(cx, cy, ox, oy), r: 4, solid: true, rot: 0, ...o });
   for (const f of FIX) decor.push({ model: f.model, x: f.x, y: f.y, r: 2, solid: !f.hang, rot: 0, lift: f.hang ? f.hang - MODEL_DEFS[f.model].H * VOX : 0, swing: f.flick ? MODEL_DEFS[f.model].H * VOX : 0 });   // hanging lamps are out of reach; lanterns sway on their chains
@@ -491,9 +515,12 @@ function sparks(x, y, lift, n, dir, spread = 2.6) {                             
 }
 function oil(x, y, lift, n, dir) { for (let i = 0; i < n; i++) { const a = dir + rand(-.7, .7), s = rand(20, 75); spawn('a_oil', x, y, lift, { vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: rand(10, 60), g: 220, life: rand(.4, .8) }); } }
 function smoke(x, y, lift, n) { for (let i = 0; i < n; i++) spawn(Math.random() < .5 ? 'a_puff1' : 'a_puff2', x + rand(-3, 3), y + rand(-3, 3), lift + rand(0, 4), { vx: rand(-5, 5), vy: rand(-5, 5), vz: rand(8, 22), life: rand(.6, 1.4), spin: rand(-2, 2) }); }
-function wreck(e, fx0, fy0) {                                                   // the machine flies apart: every chunk tumbles, bounces and stays where it lands
-  const away = Math.atan2(e.y - fy0, e.x - fx0), rx = Math.sin(e.yaw), ry = -Math.cos(e.yaw);
-  for (const g of GIBS[e.type]) { const a = away + rand(-1.3, 1.3), s = rand(20, 95); spawn(g.name, e.x + rx * g.dx, e.y + ry * g.dx, (e.fly || 0) + g.dz, { a: e.yaw - Math.PI / 2, vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: rand(25, 95), g: 210, bounce: true, spin: rand(-9, 9), life: rand(1.4, 2.6), stay: true }); }
+function wreck(e, fx0, fy0) {                                                   // the machine comes apart: its parts fall, tip over and stay where they land
+  const away = Math.atan2(e.y - fy0, e.x - fx0), rx = Math.sin(e.yaw), ry = -Math.cos(e.yaw), rig = RIG[e.type];
+  const fling = (name, x, y, lift, o) => { const a = away + rand(-1.3, 1.3), s = rand(20, 95); spawn(name, x, y, lift, { a: e.yaw - Math.PI / 2, vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: rand(25, 95), g: 210, bounce: true, spin: rand(-9, 9), life: rand(1.4, 2.6), stay: true, ...o }); };
+  if (rig) { fling(e.type + '_torso_d2', e.x, e.y, 0, { base: rig.hip, tip: 1 }); fling(e.type + '_ll', e.x, e.y, 0, { base: 0, tip: 1 }); fling(e.type + '_lr', e.x, e.y, 0, { base: 0, tip: -1 });
+    for (const i of [0, 1]) if (e.arm[i]) fling(`${e.type}_a${i ? 'r' : 'l'}`, e.x, e.y, 0, { base: rig.sh - 5, tip: 1 }); burst(e.x, e.y, rig.hip, 8, 'a_bit'); }
+  else for (const g of GIBS[e.type]) fling(g.name, e.x + rx * g.dx, e.y + ry * g.dx, (e.fly || 0) + g.dz);
   sparks(e.x, e.y, 8 + (e.fly || 0), e.boss ? 60 : 26); oil(e.x, e.y, 9 + (e.fly || 0), e.boss ? 30 : 12, away); smoke(e.x, e.y, 4, e.boss ? 12 : 5);
   if (!inPit(e.x, e.y)) litter('a_pool', e.x, e.y);
 }
@@ -514,7 +541,16 @@ function hurtEnemy(e, dmg, fx0, fy0) {
   if (e.dead) return;
   const back = Math.atan2(fy0 - e.y, fx0 - e.x), hx = e.x + Math.cos(back) * e.r * .7, hy = e.y + Math.sin(back) * e.r * .7, hz = rand(5, 13) + (e.fly ? e.fly - 4 : 0);   // where the shot struck, on the side facing the gun
   e.hp -= dmg; e.flash = .1; e.awake = true; sparks(hx, hy, hz, 5 + (dmg > 20 ? 5 : 0), back, 1.8); oil(hx, hy, hz, 2, back); burst(hx, hy, hz, 1, 'a_bit');
-  if (e.hp > 0) { sfx('hit', e); return; }
+  if (e.hp > 0) {
+    const rig = RIG[e.type], left = e.arm[0] + e.arm[1];
+    if (rig && ((left === 2 && e.hp < e.hp0 * .6) || (left === 1 && e.hp < e.hp0 * .28 && !e.boss))) {   // an arm is shot away: it can no longer fire a gun it has lost
+      const i = e.arm[0] && e.arm[1] ? (Math.random() < .5 ? 0 : 1) : e.arm[0] ? 0 : 1, a = back + Math.PI + rand(-.9, .9), v = rand(30, 70); e.arm[i] = 0;
+      spawn(`${e.type}_a${i ? 'r' : 'l'}`, e.x, e.y, 0, { a: e.yaw - Math.PI / 2, vx: Math.cos(a) * v, vy: Math.sin(a) * v, vz: rand(30, 70), g: 210, bounce: true, spin: rand(-6, 6), life: rand(1.2, 2), stay: true, base: rig.sh - 5, tip: 1 });
+      sparks(hx, hy, rig.sh, 16); oil(hx, hy, rig.sh, 8, back); sfx('die', e);
+      if (!rig.gun.some(g => e.arm[g])) { e.range = 0; e.speed *= 1.6; }                                  // disarmed, it charges
+    }
+    sfx('hit', e); return;
+  }
   e.dead = true; stats.kills++; sfx('die', e); wreck(e, fx0, fy0); P.shake = Math.max(P.shake, e.boss ? 2 : .35);
   const a = Math.atan2(e.y - fy0, e.x - fx0); e.fall = { dx: Math.cos(a), dy: Math.sin(a), a: 0, t: 0 };
   if (e.type === 'automate' && Math.random() < .45) items.push({ kind: 'bullets', x: e.x, y: e.y, small: true });
@@ -574,7 +610,8 @@ function update(dt) {
   moveBody(P, P.vx * dt, P.vy * dt, 4.5, enemies);
   const here = tile(Math.floor(P.x / CS), Math.floor(P.y / CS)), was = P.bob;
   P.bob += Math.hypot(P.vx, P.vy) * dt * 0.09;
-  if (snd) { snd.room(ROOM_OF[here === 'D' ? doorAt(Math.floor(P.x / CS), Math.floor(P.y / CS)).floor : here]); if (!muted) { snd.tick(dt); if (Math.floor(P.bob / Math.PI) !== Math.floor(was / Math.PI) && STEP_ON[here]) snd.step(STEP_ON[here], Math.floor(P.bob / Math.PI) & 1 ? .18 : -.18); } }   // a footfall each time the stride lands
+  P.heat = enemies.some(e => !e.dead && e.awake && e.see) ? 4 : Math.max(0, (P.heat || 0) - dt);            // the fight music holds for a few seconds after the last machine loses sight of you
+  if (snd) { snd.mood(P.heat > 0); snd.room(ROOM_OF[here === 'D' ? doorAt(Math.floor(P.x / CS), Math.floor(P.y / CS)).floor : here]); if (!muted) { snd.tick(dt); if (Math.floor(P.bob / Math.PI) !== Math.floor(was / Math.PI) && STEP_ON[here]) snd.step(STEP_ON[here], Math.floor(P.bob / Math.PI) & 1 ? .18 : -.18); } }   // a footfall each time the stride lands
  P.cool -= dt; P.kick = Math.max(0, P.kick - dt * 5); P.shake = Math.max(0, P.shake - dt * 4);
   for (let i = flashes.length - 1; i >= 0; i--) if ((flashes[i].t += dt) > flashes[i].life) flashes.splice(i, 1);
   train.next -= dt;                                                                                       // the train: out of one tunnel, through the station, into the other
@@ -599,11 +636,12 @@ function update(dt) {
     const dx = P.x - e.x, dy = P.y - e.y, dist = Math.hypot(dx, dy);
     e.seeT -= dt; if (e.seeT <= 0) { e.seeT = .18; e.see = dist < 320 && canSee(e.x, e.y, P.x, P.y); }
     if (!e.awake) { if ((e.see && dist < 260) || dist < 40) { e.awake = true; sfx('wake', e); } else continue; }
-    e.yaw = Math.atan2(dy, dx);
+    e.yaw = Math.atan2(dy, dx); e.aim += (1 - e.aim) * Math.min(1, dt * 7);                             // the guns come up
     e.cool -= dt;
     if (e.see && dist < e.range && e.cool <= 0 && !P.dead) {         // fire a volley of slow, dodgeable shots
       e.cool = e.rate * (.8 + Math.random() * .5); e.atk = .22; sfx('enemy', e); flashAt(e.x + Math.cos(e.yaw) * (e.r + 3), e.y + Math.sin(e.yaw) * (e.r + 3), 8 + (e.fly || 0), 80, 1.8, WARM, .12);
-      for (let i = 0; i < e.shots; i++) { const a = e.yaw + (i - (e.shots - 1) / 2) * .16 + (Math.random() - .5) * .08; shots.push({ model: e.shot, x: e.x + Math.cos(a) * (e.r + 3), y: e.y + Math.sin(a) * (e.r + 3), vx: Math.cos(a) * 115, vy: Math.sin(a) * 115, dmg: e.dmg, lift: 7 + (e.fly || 0), t: 0 }); }
+      const guns = RIG[e.type] ? RIG[e.type].gun.filter(g => e.arm[g]).length / RIG[e.type].gun.length : 1, vol = Math.max(1, Math.round(e.shots * guns));
+      for (let i = 0; i < vol; i++) { const a = e.yaw + (i - (vol - 1) / 2) * .16 + (Math.random() - .5) * .08; shots.push({ model: e.shot, x: e.x + Math.cos(a) * (e.r + 3), y: e.y + Math.sin(a) * (e.r + 3), vx: Math.cos(a) * 115, vy: Math.sin(a) * 115, dmg: e.dmg, lift: 7 + (e.fly || 0), t: 0 }); }
       if (e.boss && Math.random() < .35) for (let i = 0; i < 12; i++) { const a = i / 12 * 6.283; shots.push({ model: 'a_spark', x: e.x + Math.cos(a) * 12, y: e.y + Math.sin(a) * 12, vx: Math.cos(a) * 90, vy: Math.sin(a) * 90, dmg: 8, lift: 7, t: 0 }); }
     }
     let mx = 0, my = 0;
@@ -627,11 +665,11 @@ function update(dt) {
     const p = fx[i], nx = p.x + p.vx * dt, ny = p.y + p.vy * dt; p.t += dt;
     if (solidAtPt(nx, ny)) { p.vx *= -.4; p.vy *= -.4; } else { p.x = nx; p.y = ny; }                    // off the walls
     if (p.g && !p.rest) {
-      const floor = (inPit(p.x, p.y) ? -PIT : 0) + .1; p.vz -= p.g * dt; p.lift += p.vz * dt;
+      const floor = (inPit(p.x, p.y) ? -PIT : 0) + .1 - (p.base || 0); p.vz -= p.g * dt; p.lift += p.vz * dt;   // `base`: how far above its own origin the part's underside is
       if (p.lift <= floor) { p.lift = floor; if (p.bounce && p.vz < -30) { p.vz *= -.38; p.vx *= .55; p.vy *= .55; p.spin *= .6; } else { p.rest = true; p.vx = p.vy = p.vz = 0; } }
     } else if (!p.g) p.lift += p.vz * dt;
     if (!p.rest) p.a += p.spin * dt;
-    if (p.t > p.life) { if (p.stay) { debris.push({ model: p.model, x: p.x, y: p.y, lift: p.lift, rot: p.a }); if (debris.length > 220) debris.shift(); } fx.splice(i, 1); }
+    if (p.t > p.life) { if (p.stay) { debris.push({ model: p.model, x: p.x, y: p.y, lift: p.lift, rot: p.a, tip: p.tip, base: p.base }); if (debris.length > 220) debris.shift(); } fx.splice(i, 1); }
   }
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]; if (Math.hypot(it.x - P.x, it.y - P.y) > 9) continue;
@@ -676,21 +714,30 @@ function render(now) {
   for (const d of decor) if (!d.gone) { if (d.swing && vis(d.x, d.y, 8)) { R.draw(mesh(d.model), M4(d.x, d.y, d.lift, d.rot, Math.sin(time * 1.4 + d.x * .3) * .09, d.swing), VOX); n++; } else draw(d.model, d.x, d.y, d.rot, d.lift); }
   for (const it of items) draw(PICK[it.kind].model, it.x, it.y, now * 0.002, 3 + Math.sin(now * 0.004 + it.x) * 1.2);
   for (const e of enemies) if (!e.dead && vis(e.x, e.y, 14)) {         // a destroyed machine is only wreckage now
-    const rot = e.yaw - Math.PI / 2, fl = e.flash > 0 ? 0.8 : 0, lift = e.fly ? e.fly + Math.sin(e.t * 3) * 1.5 : 0;
-    if (!e.awake) { draw(e.type + '_i', e.x, e.y, rot, lift, fl); continue; }
-    const hurt = e.hp < e.hp0 * .34 ? '_d2' : e.hp < e.hp0 * .67 ? '_d1' : '', hip = HIP[e.type] * VOX, step = e.moving ? Math.sin(e.t * 9) : 0;
-    const lean = (e.atk > 0 ? -.16 * e.atk / .22 : 0) + (fl ? -.14 : 0) + (e.fly ? Math.sin(e.t * 2.3) * .1 : step * .03);   // recoil when it fires, a flinch when it is hit
-    R.draw(mesh(`${e.type}_${e.atk > 0 ? 'fire' : 'aim'}${hurt}`), M4(e.x, e.y, lift + Math.abs(step) * .35, rot, lean, hip), VOX, fl); n++;
-    if (HIP[e.type]) { R.draw(mesh(e.type + '_ll'), M4(e.x, e.y, lift, rot, step * .5, hip), VOX, fl); R.draw(mesh(e.type + '_lr'), M4(e.x, e.y, lift, rot, -step * .5, hip), VOX, fl); n += 2; }
+    const rot = e.yaw - Math.PI / 2, fl = e.flash > 0 ? 0.8 : 0, lift = e.fly ? e.fly + Math.sin(e.t * 3) * 1.5 : 0, rig = RIG[e.type];
+    const hurt = e.hp < e.hp0 * .34 ? '_d2' : e.hp < e.hp0 * .67 ? '_d1' : '', step = e.awake && e.moving ? Math.sin(e.t * 9) : 0;
+    const lean = (e.atk > 0 ? -.14 * e.atk / .22 : 0) + (fl ? -.12 : 0) + (e.fly ? Math.sin(e.t * 2.3) * .1 : step * .03);   // recoil when it fires, a flinch when it is hit
+    if (!rig) { if (!e.awake) draw(e.type + '_i', e.x, e.y, rot, lift, fl); else { R.draw(mesh(`${e.type}_${e.atk > 0 ? 'fire' : 'aim'}${hurt}`), M4(e.x, e.y, lift, rot, lean, 4), VOX, fl); n++; } }
+    else {
+      const base = M4(e.x, e.y, lift + Math.abs(step) * .35, rot), body = mmul(base, about(0, 0, rig.hip, mRX(lean)));
+      R.draw(mesh(`${e.type}_torso${hurt}`), body, VOX, fl);
+      R.draw(mesh(e.type + '_ll'), mmul(base, about(0, 0, rig.hip, mRX(step * .5))), VOX, fl); R.draw(mesh(e.type + '_lr'), mmul(base, about(0, 0, rig.hip, mRX(-step * .5))), VOX, fl);
+      for (const i of [0, 1]) if (e.arm[i]) {                          // an arm: raised from the shoulder and swung inwards until its gun points down the machine's line of sight
+        const up = e.aim * 1.5 + (e.atk > 0 ? .25 * e.atk / .22 : 0) - (e.aim < .5 ? step * (i ? .2 : -.2) : 0), R3 = mmul(mRZ((i ? 1 : -1) * e.aim * Math.PI / 4), mRX(up));
+        R.draw(mesh(`${e.type}_a${i ? 'r' : 'l'}`), mmul(body, about(rig.ax[i], 0, rig.sh, R3)), VOX, fl);
+      }
+      n += 5;
+    }
     if (hurt && Math.random() < (hurt === '_d2' ? .25 : .08)) sparks(e.x, e.y, lift + rand(8, 14), 1);                // a damaged machine spits sparks
   }
   if (train.x < 620) for (let i = 0; i < 3; i++) { const x = train.x + i * 31; if (x > 4 && x < 252) draw('a_train', x, 464, 0, -PIT + .8); }   // three carriages, hidden while they are inside the tunnels
-  for (const d of debris) { const k = PARTICLE[d.model]; if (k) cube(k, d.x, d.y, d.lift); else draw(d.model, d.x, d.y, d.rot, d.lift); }
+  for (const d of debris) { const k = PARTICLE[d.model]; if (k) cube(k, d.x, d.y, d.lift); else if (d.tip) { if (vis(d.x, d.y, 14)) { R.draw(mesh(d.model), M4(d.x, d.y, d.lift + 1.5, d.rot, d.tip * 1.5, d.base + 1.5), VOX); n++; } } else draw(d.model, d.x, d.y, d.rot, d.lift); }
   for (const s of shots) draw(s.model, s.x, s.y, Math.atan2(s.vy, s.vx) - Math.PI / 2, s.lift);
   for (const p of fx) {
     const k = p.k || PARTICLE[p.model];
     if (k) cube(k, p.x, p.y, p.lift);
     else if (p.model[2] === 'p' && p.model[3] === 'u') { if (ns < 512 && vis(p.x, p.y, 6)) { const l = lightAt(p.x, p.y), a = 1 - p.t / p.life; smokeBuf.set([p.x, p.y, p.lift + 2, (p.model === 'a_puff2' ? 6 : 4) + p.t * 5, (p.steam ? .9 : .55) * l[0] + .12, (p.steam ? .9 : .53) * l[1] + .12, (p.steam ? .92 : .5) * l[2] + .12, (p.steam ? .35 : .6) * a], ns++ * 8); } }   // puffs of smoke
+    else if (p.tip) { if (vis(p.x, p.y, 14)) { R.draw(mesh(p.model), M4(p.x, p.y, p.lift + 1.5, p.a, p.tip * 1.5 * Math.min(1, p.t * 2.5), p.base + 1.5), VOX); n++; } }   // a falling part tips over as it goes
     else draw(p.model, p.x, p.y, p.rot != null ? p.rot : p.a, p.lift);
   }
   R.cubes(cubeBuf, nc);
@@ -715,7 +762,7 @@ function render(now) {
     ls.push([l.x, l.y, l.z, l.R * 1.5, l.col[0] * k, l.col[1] * k, l.col[2] * k, canSee(P.x, P.y, l.x, l.y) ? l.air * .12 : 0]);
   }
   const bodies = [];
-  for (const e of enemies) if (!e.dead) bodies.push([Math.hypot(e.x - P.x, e.y - P.y), e.x, e.y, e.r * 1.05, (e.fly || 0) + MODEL_DEFS[e.type + '_i'].H * VOX]);
+  for (const e of enemies) if (!e.dead) bodies.push([Math.hypot(e.x - P.x, e.y - P.y), e.x, e.y, e.r * 1.05, (e.fly || 0) + (RIG[e.type] ? RIG[e.type].H : MODEL_DEFS[e.type + '_i'].H) * VOX]);
   for (const d of decor) if (!d.gone && d.solid && d.r >= 2) bodies.push([Math.hypot(d.x - P.x, d.y - P.y), d.x, d.y, Math.min(d.r, 6), MODEL_DEFS[d.model].H * (MODEL_DEFS[d.model].o ? MODEL_DEFS[d.model].o.vox : 1)]);
   bodies.sort((a, b) => a[0] - b[0]);
   R.end({ lights: ls, bodies: bodies.slice(0, 10).map(b => b.slice(1)), fog: [.04, .035, .05, 80], sky: 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))), time, smoke: smokeBuf, smokeCount: ns });
@@ -756,7 +803,7 @@ function showScreen() {
 
 // ---------- input + loop ----------
 state = 'title'; reset(); showScreen();
-const start = () => { if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); snd = Sound(audio); } catch (e) { audio = snd = null; } } if (state !== 'play') { if (state !== 'pause') reset(); state = 'play'; showScreen(); } };
+const start = () => { if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); snd = Sound(audio).music({ explore: 'music/explore.mp3', combat: 'music/combat.mp3' }); } catch (e) { audio = snd = null; } } if (state !== 'play') { if (state !== 'pause') reset(); state = 'play'; showScreen(); } };
 const lock = () => { if (scene.requestPointerLock && matchMedia('(pointer:fine)').matches) { try { const p = scene.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* not available */ } } };
 $('screen').addEventListener('click', () => { start(); lock(); });
 scene.addEventListener('mousedown', e => { if (state !== 'play') return; if (document.pointerLockElement !== scene) lock(); if (e.button === 0) keys.fire = true; });

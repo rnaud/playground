@@ -88,6 +88,16 @@ function Sound(ctx) {
     const s = ctx.createBufferSource(), fl = ctx.createBiquadFilter(), a = ctx.createGain(), l = ctx.createOscillator(), d = ctx.createGain();
     s.buffer = white; s.loop = true; fl.type = type; fl.frequency.value = f; a.gain.value = v; l.frequency.value = rate; d.gain.value = v * .6; l.connect(d); d.connect(a.gain); s.connect(fl); fl.connect(a); a.connect(g); s.start(0, Math.random()); l.start();
   }
+  // ---- music: two looping tracks, one for exploring and one for a fight, crossfaded by what is happening ----
+  const tracks = {}, musicBus = ctx.createGain(), XF = 3; musicBus.connect(master); let fight = false;
+  const LEVELS = { explore: [.34, .05], combat: [0, .46] };                   // each track's level while exploring, and in a fight
+  const keepPlaying = () => { for (const k in tracks) { const t = tracks[k];
+    t.gain.gain.setTargetAtTime(LEVELS[k][fight ? 1 : 0], now(), fight ? .5 : 1.8);                       // the fight music comes in fast and lingers
+    if (now() < t.next - .5) continue;
+    const at = Math.max(now(), t.next), s = ctx.createBufferSource(), g = ctx.createGain(), d = t.buf.duration; s.buffer = t.buf;   // each pass fades in over the tail of the last, so the loop has no gap or click
+    g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(1, at + XF); g.gain.setValueAtTime(1, at + d - XF); g.gain.linearRampToValueAtTime(0, at + d);
+    s.connect(g); g.connect(t.gain); s.start(at); t.next = at + d - XF;
+  } };
   const beds = {}; let room = null, next = 1;
   // how loud each effect sits in the mix: guns and pain up front, the rest behind them
   const LEVEL = { pistol: 2.2, smg: 2.3, shotgun: 1.8, tesla: 2, click: 2, hit: 2.4, die: 1.5, boom: 1.25, enemy: 2.4, wake: 2, door: 1.3, pickup: 1.6, key: 1.5, hurt: 3, swap: 1.6, train: 1.6 };
@@ -102,7 +112,10 @@ function Sound(ctx) {
       if (!beds[name]) { beds[name] = ctx.createGain(); beds[name].gain.value = 0; beds[name].connect(bed); BEDS[name](beds[name]); }
       beds[name].gain.setTargetAtTime(1, t, .8); room = name; next = 1;
     },
-    tick(dt) { if (!room || (next -= dt) > 0) return; const [k, every] = DETAIL[room]; next = every * rnd(.6, 1.5); play(k, { vol: rnd(.5, 1), pan: rnd(-.8, .8), muffle: .2 }); },   // drips, crickets, a clock, the workshop's press
+    music(urls) { for (const k in urls) fetch(urls[k]).then(r => r.arrayBuffer()).then(b => ctx.decodeAudioData(b)).then(buf => { const gain = ctx.createGain(); gain.gain.value = 0; gain.connect(musicBus); tracks[k] = { buf, gain, next: 0 }; }).catch(() => {}); return this; },
+    mood(fighting) { fight = !!fighting; },
+    get loaded() { return Object.keys(tracks); },
+    tick(dt) { keepPlaying(); if (!room || (next -= dt) > 0) return; const [k, every] = DETAIL[room]; next = every * rnd(.6, 1.5); play(k, { vol: rnd(.5, 1), pan: rnd(-.8, .8), muffle: .2 }); },   // drips, crickets, a clock, the workshop's press
     mute(on) { master.gain.setTargetAtTime(on ? 0 : .9, now(), .03); },
   };
 }

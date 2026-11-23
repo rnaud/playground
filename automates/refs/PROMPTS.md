@@ -52,3 +52,10 @@ Glowing pixels (lamp glass, furnace grilles, portholes, muzzle flashes) are pick
 | --- | --- | --- |
 | `train` | 16:9 | "One single 1930s Paris Metro train carriage seen exactly from the side, a flat orthographic side elevation", on magenta. Three of them run through the station. |
 | `props-rooms` | 16:9 | Four objects on magenta: hanging chandelier, stone arch rib for the catacomb tunnels, rack of three casks, workbench. |
+
+### Added for true 3D enemies and music
+
+| Files | Aspect | What it is |
+| --- | --- | --- |
+| `turn-automate`, `turn-scaphandre`, `turn-colosse` | 16:9 | "A character turnaround sheet ... Exactly three views of the SAME robot in a single row ... seen from the front, seen exactly from its left side in profile, seen from behind", all in "the same neutral A-pose", on magenta. `build_art.py` carves each into a 3D voxel volume: solid where the front and side outlines agree, coloured from the front and back views. |
+| `../../music/explore.mp3`, `../../music/combat.mp3` | n/a | ElevenLabs Music v2.5 through Higgsfield's agent chat, 90 seconds each, instrumental: a slow minor-key musette waltz for exploring, and fast gypsy jazz for a fight. |
