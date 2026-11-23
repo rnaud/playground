@@ -56,16 +56,18 @@ const VPU = 4, VOX = 1 / VPU, WPU = 8, WV = CS * WPU, HV = WH * WPU, THICK = WPU
 const atlasCv = mkCanvas(atlasImg.width, atlasImg.height), AW = atlasImg.width;
 atlasCv.getContext('2d').drawImage(atlasImg, 0, 0);
 const AD = atlasCv.getContext('2d').getImageData(0, 0, AW, atlasImg.height).data;
-const GLOW = 0x1000000;                                                      // set on a colour that glows: it ignores the baked light
-const shade = (c, k) => c >= GLOW ? c : Math.min(255, (c >> 16 & 255) * k | 0) << 16 | Math.min(255, (c >> 8 & 255) * k | 0) << 8 | Math.min(255, (c & 255) * k | 0);
+const GLOW = 0x1000000, SHINY = 0x2000000;                                   // flags on a colour: it glows (ignores the light, feeds the bloom); it is polished (metal, enamel, glass)
+const isBrass = (r, g, b) => r > 150 && g > 105 && b < 125 && r - b > 70;
+const POLISHED = /^(wall_[MPNLIGTY]|tunnel|vault|automate|scaphandre|colosse|lanterne|w_|lamp|hanglamp|lantern|bin|signal|exit|key_|helmet|train|chandelier)/;
+const shade = (c, k) => c & GLOW ? c : (c & SHINY) | Math.min(255, (c >> 16 & 255) * k | 0) << 16 | Math.min(255, (c >> 8 & 255) * k | 0) << 8 | Math.min(255, (c & 255) * k | 0);
 // A sprite: colours with the bottom row first, -1 where empty. Asking for a size resamples it; `flip` mirrors it.
 function sprite(name, w, h, flip) {
-  const r = ART.rects[name], W = w || (r ? r[2] : 24), H = h || (r ? r[3] : 24), c = new Int32Array(W * H);
+  const r = ART.rects[name], W = w || (r ? r[2] : 24), H = h || (r ? r[3] : 24), c = new Int32Array(W * H), polished = POLISHED.test(name);
   for (let z = 0; z < H; z++) for (let x = 0; x < W; x++) {
     const xx = flip ? W - 1 - x : x;
     if (!r) { c[z * W + x] = ((x >> 2) + (z >> 2)) & 1 ? 0xc040c0 : 0x402040; continue; }                 // a sheet that has not been generated yet
     const i = ((r[1] + r[3] - 1 - (z * r[3] / H | 0)) * AW + r[0] + (xx * r[2] / W | 0)) * 4;
-    c[z * W + x] = AD[i + 3] < 128 ? -1 : (AD[i + 3] < 230 ? GLOW : 0) | AD[i] << 16 | AD[i + 1] << 8 | AD[i + 2];
+    c[z * W + x] = AD[i + 3] < 128 ? -1 : (AD[i + 3] < 230 ? GLOW : polished || isBrass(AD[i], AD[i + 1], AD[i + 2]) ? SHINY : 0) | AD[i] << 16 | AD[i + 1] << 8 | AD[i + 2];
   }
   return { name, w: W, h: H, c };
 }
@@ -91,43 +93,43 @@ function relief(s) {
   }
   return out;
 }
-function panelMesh(name, s, flat, thick) {
-  const { w, h, c } = s, dep = flat ? new Uint8Array(w * h) : relief(s), v = [], col = new Int32Array(w * h), done = new Uint8Array(w * h);
+function panelMesh(name, s, flat, thick, given, box) {                        // `given`: a depth map to use as it is (a wall that has been shot at); `box`: build only this block of it [x0, x1, z0, z1]
+  const { w, h, c } = s, [x0, x1, z0, z1] = box || [0, s.w, 0, s.h], dep = given || (flat ? new Uint8Array(w * h) : relief(s)), v = [], col = new Int32Array(w * h), done = new Uint8Array(w * h);
   const D = (x, z) => dep[z * w + x];
-  const quad = (p, k, n) => { for (const i of [0, 1, 2, 0, 2, 3]) v.push(p[i][0] - w / 2, p[i][1], 0, p[i][2], (k >> 16 & 255) / 255 + (k >= GLOW ? 2 : 0), (k >> 8 & 255) / 255, (k & 255) / 255, n[0], n[1], n[2]); };
-  for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {                                               // soft contact shadow where a neighbour stands proud
+  const quad = (p, k, n) => { for (const i of [0, 1, 2, 0, 2, 3]) v.push(p[i][0] - w / 2, p[i][1], 0, p[i][2], (k >> 16 & 255) / 255 + (k & GLOW ? 2 : 0), (k >> 8 & 255) / 255 + (k & SHINY ? 2 : 0), (k & 255) / 255, n[0], n[1], n[2]); };
+  for (let z = z0; z < z1; z++) for (let x = x0; x < x1; x++) {                                           // soft contact shadow where a neighbour stands proud
     const d = D(x, z); let occ = 0;
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const xx = x + dx, zz = z + dz; if (xx >= 0 && xx < w && zz >= 0 && zz < h) occ += Math.min(4, Math.max(0, d - D(xx, zz))); }
     col[z * w + x] = shade(c[z * w + x], Math.max(.6, 1 - occ * .045));
   }
-  for (let z = 0; z < h; z++) {
-    for (let x = 0; x < w; x++) {                                                                         // front faces, merged into the largest rectangles of one colour and depth
+  for (let z = z0; z < z1; z++) {
+    for (let x = x0; x < x1; x++) {                                                                       // front faces, merged into the largest rectangles of one colour and depth
       if (done[z * w + x]) continue;
       const d = D(x, z), k = col[z * w + x], same = (xx, zz) => !done[zz * w + xx] && D(xx, zz) === d && col[zz * w + xx] === k;
       let e = x + 1, t = z + 1;
-      while (e < w && same(e, z)) e++;
-      grow: for (; t < h; t++) for (let xx = x; xx < e; xx++) if (!same(xx, t)) break grow;
+      while (e < x1 && same(e, z)) e++;
+      grow: for (; t < z1; t++) for (let xx = x; xx < e; xx++) if (!same(xx, t)) break grow;
       for (let zz = z; zz < t; zz++) done.fill(1, zz * w + x, zz * w + e);
       quad([[x, -d, z], [e, -d, z], [e, -d, t], [x, -d, t]], k, [0, 1, 0]);
     }
-    for (let x = 0; x <= w; x++) {                                                                        // steps between columns, and the two ends
+    for (let x = x0; x < x1 || (x === w && x1 === w); x++) {                                             // steps between columns, and the two ends
       const a = x === 0 ? thick : D(x - 1, z), b = x === w ? thick : D(x, z), X = x === 0 ? .25 : x === w ? w - .25 : x;   // the end caps sit just inside the cell, so they never share a plane with the wall round the corner
       if (a < b) quad([[X, -b, z], [X, -a, z], [X, -a, z + 1], [X, -b, z + 1]], shade(c[z * w + x - 1], .82), [1, 0, 0]);
       else if (a > b) quad([[X, -a, z], [X, -b, z], [X, -b, z + 1], [X, -a, z + 1]], shade(c[z * w + x], .82), [-1, 0, 0]);
     }
-    if (z < h - 1) for (let x = 0; x < w; x++) {                                                          // ledges and their undersides
+    if (z < h - 1) for (let x = x0; x < x1; x++) {                                                        // ledges and their undersides
       const a = D(x, z), b = D(x, z + 1);
       if (a < b) quad([[x, -b, z + 1], [x + 1, -b, z + 1], [x + 1, -a, z + 1], [x, -a, z + 1]], shade(c[z * w + x], 1.08), [0, 0, 1]);
       else if (a > b) quad([[x, -a, z + 1], [x + 1, -a, z + 1], [x + 1, -b, z + 1], [x, -b, z + 1]], shade(c[(z + 1) * w + x], .6), [0, 0, -1]);
     }
   }
-  return { name, W: w, L: thick, H: h, data: new Float32Array(v), count: v.length / 10, top: new Float32Array(0), topCount: 0 };
+  return { name, W: w, L: thick, H: h, data: new Float32Array(v), count: v.length / 10, top: new Float32Array(0), topCount: 0, dep, src: s };
 }
 const WALL_BASE = { P: 'M', N: 'M', L: 'M', V: 'B', F: 'W', X: 'S', G: 'I', T: 'I', Y: 'I' };              // a variant falls back to its plain wall until its sheet exists
-const wallSprite = t => sprite(ART.rects['wall_' + t] ? 'wall_' + t : 'wall_' + (WALL_BASE[t] || t), WV, HV, WALL_FLIP);
+const wallSprite = (t, mir) => sprite(ART.rects['wall_' + t] ? 'wall_' + t : 'wall_' + (WALL_BASE[t] || t), WV, HV, WALL_FLIP !== !!mir);
 const TUNNEL = { '0,28': 1, '0,29': 0, '15,28': 0, '15,29': 1 };                      // which half of the tunnel-mouth picture each end cell of the track shows
 const tunnelSprite = half => { const s = sprite('tunnel', 2 * WV, HV + PIT * WPU, WALL_FLIP), c = new Int32Array(WV * s.h); for (let z = 0; z < s.h; z++) for (let x = 0; x < WV; x++) c[z * WV + x] = s.c[z * s.w + x + half * WV]; return { name: 'tunnel' + half, w: WV, h: s.h, c }; };
-const PANEL = {}, panelFor = (t, flat) => PANEL[t + flat] || (PANEL[t + flat] = t[0] === 'U' ? panelMesh('panel_' + t, tunnelSprite(+t[1]), 0, THICK) : panelMesh(`panel_${t}_${flat}`, wallSprite(t), flat, THICK));
+const PANEL = {}, panelFor = (t, flat) => PANEL[t + flat] || (PANEL[t + flat] = t[0] === 'U' ? panelMesh('panel_' + t, tunnelSprite(+t[1]), 0, THICK) : panelMesh(`panel_${t}_${flat}`, wallSprite(t.replace('~', ''), t[1] === '~'), flat, THICK));
 const FAR = {}, farFor = t => FAR[t] || (FAR[t] = panelMesh('far_' + t, sprite(wallSprite(t).name, CS * 2, WH * 2, WALL_FLIP), 1, 2));   // a coarse flat panel for distant walls
 const POST = {}, postFor = t => POST[t] || (POST[t] = (s => buildMesh({ name: 'post_' + t, W: THICK, L: THICK, H: HV, fn: (x, y, z) => shade(s.c[z * WV + x], .9) }))(wallSprite(WALL_BASE[t] || t)));
 const opens = (cx, cy) => { const t = tile(cx, cy); return isFloor(t) || t === 'H'; };
@@ -138,7 +140,7 @@ for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {
   if (t === ' ' || isFloor(t)) continue;
   for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (opens(cx + sx, cy + sy))               // beside a door the panel stays flat so the door closes without gaps
     panels.push(tun != null ? { m: panelFor('U' + tun, 0), x: x + sx * 8, y: y + sy * 8, rot: Math.atan2(-sx, sy), nx: sx, ny: sy, lift: -PIT }
-      : { m: panelFor(t, tile(cx + sx, cy + sy) === 'D' ? 1 : 0), far: farFor(t), x: x + sx * 8, y: y + sy * 8, rot: Math.atan2(-sx, sy), nx: sx, ny: sy, lift: 0 });
+      : { m: panelFor(((cx + cy) & 1) && t !== 'N' && t !== 'P' ? t + '~' : t, tile(cx + sx, cy + sy) === 'D' ? 1 : 0), far: farFor(t), x: x + sx * 8, y: y + sy * 8, rot: Math.atan2(-sx, sy), nx: sx, ny: sy, lift: 0 });
   for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) if (opens(cx + sx, cy + sy) && !opens(cx + sx, cy) && !opens(cx, cy + sy))   // inside corners get a post
     posts.push({ m: postFor(t), x: x + sx * 7.45, y: y + sy * 7.45 });      // a hair inside the cell, for the same reason
 }
@@ -153,8 +155,29 @@ for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {
   } }
 model('hedge', CS * VPU, CS * VPU, 52, (x, y, z) => { const n = noise3(x >> 1, y >> 1, z >> 1), m = noise3(x, y, z); return shade(n > .7 ? 0x3f9a3e : n > .3 ? 0x2f8a3c : 0x236e30, (z > 49 ? 1.15 : .8 + z / 260) * (m > .8 ? 1.12 : m < .15 ? .85 : 1)); });
 
+// Walls can be shot to pieces: a panel that is hit gets its own copy of the picture and depth map, with a crater cut into it.
+const damaged = [], BLK = 32;                                                 // a damaged panel is drawn as a grid of 32-voxel blocks, so a hit only rebuilds the block it lands in
+const restore = p => { if (p.blocks) for (const b of p.blocks) if (b) R.free(b); p.own = p.blocks = p.todo = null; p.ready = false; };
+function chip(p, u, z, r) {                                                   // u along the wall and z up, in voxels
+  if (!p.far) return 0;
+  const w = p.m.W, h = p.m.H, nx = w / BLK, nb = nx * h / BLK;
+  if (!p.own) { p.own = { c: Int32Array.from(p.m.src.c), dep: Uint8Array.from(p.m.dep) }; p.blocks = new Array(nb).fill(null); p.todo = new Set(p.blocks.keys()); damaged.push(p); if (damaged.length > 60) restore(damaged.shift()); }
+  const { c, dep } = p.own; let was = 0;
+  for (let dz = -r - 1; dz <= r + 1; dz++) for (let dx = -r - 1; dx <= r + 1; dx++) {
+    const X = Math.round(u + dx), Z = Math.round(z + dz), d = Math.hypot(dx, dz) + noise3(X, Z, 3) * 1.6;
+    if (d > r || X < 0 || X >= w || Z < 0 || Z >= h) continue;
+    const i = Z * w + X, nd = Math.min(p.m.L - 1, 2 + Math.round((r - d) * 1.1));
+    if (nd > dep[i]) { if (!was) was = c[i]; dep[i] = nd; c[i] = shade(c[i] & 0xffffff, .62 - nd * .05);   // the broken face is duller and darker the deeper it goes
+      for (const [ex, ez] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) { const bx = (X + ex) / BLK | 0, bz = (Z + ez) / BLK | 0; if (X + ex >= 0 && bx < nx && Z + ez >= 0 && bz < h / BLK) p.todo.add(bz * nx + bx); } }
+  }
+  return was;
+}
+function panelAt(x, y, dx, dy) {                                              // the wall panel a shot travelling (dx, dy) struck at x, y
+  for (const p of panels) { if (!p.far) continue; const rx = x - p.x, ry = y - p.y; if (Math.abs(rx * p.nx + ry * p.ny) > 2.6 || dx * p.nx + dy * p.ny > 0) continue; const u = rx * Math.cos(p.rot) + ry * Math.sin(p.rot); if (Math.abs(u) <= 8) return [p, (u + 8) * WPU]; }
+}
+
 // ---------- floors and ceilings: each reference picture covers 2 x 2 cells ----------
-const floorTex = mkCanvas(SIZE * WPU, SIZE * WPU), ceilTex = mkCanvas(SIZE * WPU, SIZE * WPU);
+const floorTex = mkCanvas(SIZE * WPU, SIZE * WPU), ceilTex = mkCanvas(SIZE * WPU, SIZE * WPU), lowTex = mkCanvas(SIZE * WPU, SIZE * WPU), LOW = 19;   // lowTex: the catacombs' ceiling, lower than the rest
 {
   const fg = floorTex.getContext('2d'), cg = ceilTex.getContext('2d');
   const FLOOR_ART = { m: 'metro', r: 'rails', c: 'earth', b: 'flag', w: 'parquet', k: 'carpet', g: 'lawn', o: 'cobble', i: 'plate' };
@@ -178,15 +201,15 @@ const floorTex = mkCanvas(SIZE * WPU, SIZE * WPU), ceilTex = mkCanvas(SIZE * WPU
       const band = (o, wd, colr) => { fg.fillStyle = colr; if (sx) fg.fillRect(sx > 0 ? X + WV - o - wd : X + o, Y, wd, WV); else fg.fillRect(X, sy > 0 ? Y + WV - o - wd : Y + o, WV, wd); };
       band(0, 6, '#5e1218'); band(6, 12, '#c9a23a');
     }
-    if (CEIL_ART[t] && !vaulted(cx, cy)) blit(cg, 'ceil_' + CEIL_ART[t], cx, cy);                                             // grass and paths are under open sky
+    if (CEIL_ART[t] && !vaulted(cx, cy)) blit(t === 'c' ? lowTex.getContext('2d') : cg, 'ceil_' + CEIL_ART[t], cx, cy);                                             // grass and paths are under open sky
   }
 }
 
 // ---------- the Metro hall: a sunken track with real rails, and a tiled barrel vault ----------
-// a mesh straight from quads: [[four corners as x, y, z in voxels], colour]
+// a mesh straight from quads: [[four corners as x, y, z in voxels], colour, normal]
 const meshOf = (name, quads, W, L, H) => {
   const v = [];
-  for (const [p, k] of quads) for (const i of [0, 1, 2, 0, 2, 3]) v.push(p[i][0] - W / 2, p[i][1] - L / 2, 0, p[i][2], (k >> 16 & 255) / 255 + (k >= GLOW ? 2 : 0), (k >> 8 & 255) / 255, (k & 255) / 255, 0, 0, 1);
+  for (const [p, k, nm = [0, 0, 1]] of quads) for (const i of [0, 1, 2, 0, 2, 3]) v.push(p[i][0] - W / 2, p[i][1] - L / 2, 0, p[i][2], (k >> 16 & 255) / 255 + (k & GLOW ? 2 : 0), (k >> 8 & 255) / 255 + (k & SHINY ? 2 : 0), (k & 255) / 255, nm[0], nm[1], nm[2]);
   return { name, W, L, H, data: new Float32Array(v), count: v.length / 10, top: new Float32Array(0), topCount: 0 };
 };
 function trackMesh(half) {                                                    // the rail picture raised into relief: rails stand proud of the sleepers, sleepers of the ballast
@@ -197,8 +220,8 @@ function trackMesh(half) {                                                    //
     for (let x = 0; x < W;) { let e = x + 1; const k = col(x, y), h = hgt(x, y); while (e < W && col(e, y) === k && hgt(e, y) === h) e++; q.push([[[x, y, h], [e, y, h], [e, y + 1, h], [x, y + 1, h]], k]); x = e; }
     for (let x = 0; x < W; x++) {
       const h = hgt(x, y), hx = x < W - 1 ? hgt(x + 1, y) : h, hy = y < L - 1 ? hgt(x, y + 1) : h;
-      if (hx !== h) q.push([[[x + 1, y, Math.min(h, hx)], [x + 1, y + 1, Math.min(h, hx)], [x + 1, y + 1, Math.max(h, hx)], [x + 1, y, Math.max(h, hx)]], shade(h > hx ? col(x, y) : col(x + 1, y), .7)]);
-      if (hy !== h) q.push([[[x, y + 1, Math.min(h, hy)], [x + 1, y + 1, Math.min(h, hy)], [x + 1, y + 1, Math.max(h, hy)], [x, y + 1, Math.max(h, hy)]], shade(h > hy ? col(x, y) : col(x, y + 1), .7)]);
+      if (hx !== h) q.push([[[x + 1, y, Math.min(h, hx)], [x + 1, y + 1, Math.min(h, hx)], [x + 1, y + 1, Math.max(h, hx)], [x + 1, y, Math.max(h, hx)]], shade(h > hx ? col(x, y) : col(x + 1, y), .7), [h > hx ? 1 : -1, 0, 0]]);
+      if (hy !== h) q.push([[[x, y + 1, Math.min(h, hy)], [x + 1, y + 1, Math.min(h, hy)], [x + 1, y + 1, Math.max(h, hy)], [x, y + 1, Math.max(h, hy)]], shade(h > hy ? col(x, y) : col(x, y + 1), .7), [0, h > hy ? 1 : -1, 0]]);
     }
   }
   return meshOf('track' + half, q, W, L, 4);
@@ -206,22 +229,22 @@ function trackMesh(half) {                                                    //
 const SPRING = 19 * VPU, RISE = 9 * VPU, vaultAt = j => Math.round(SPRING + RISE * Math.sqrt(Math.max(0, 1 - ((j + .5 - 128) / 128) ** 2)));   // the vault's height across the hall, in voxels
 function vaultMesh(bay) {                                                     // one 16-unit length of vault; `bay` lifts it clear of the door in the north wall
   const s = sprite('vault', 64, 32), W = 64, L = 256, q = [], hv = j => bay && j < 36 ? Math.max(vaultAt(j), WH * VPU) : vaultAt(j);
-  const rowOf = (row, plane) => { for (let x = 0; x < W;) { let e = x + 1; const k = s.c[(row % 32) * 64 + x]; while (e < W && s.c[(row % 32) * 64 + e] === k) e++; q.push([plane(x, e), shade(k, .94)]); x = e; } };
+  const rowOf = (row, plane, nm) => { for (let x = 0; x < W;) { let e = x + 1; const k = s.c[(row % 32) * 64 + x]; while (e < W && s.c[(row % 32) * 64 + e] === k) e++; q.push([plane(x, e), k, nm]); x = e; } };
   let row = 0;
   for (let j = 0; j < L; j++) {
     const h = hv(j), n = j < L - 1 ? hv(j + 1) : h;
-    rowOf(row++, (x, e) => [[x, j, h], [e, j, h], [e, j + 1, h], [x, j + 1, h]]);
-    for (let z = Math.min(h, n); z < Math.max(h, n); z++) rowOf(row++, (x, e) => [[x, j + 1, z], [e, j + 1, z], [e, j + 1, z + 1], [x, j + 1, z + 1]]);
-    if (bay && j < 36 && vaultAt(j) < h) for (const X of [0, W]) q.push([[[X, j, vaultAt(j)], [X, j + 1, vaultAt(j)], [X, j + 1, h], [X, j, h]], 0xdedcd2]);   // the cheeks of the door bay
+    rowOf(row++, (x, e) => [[x, j, h], [e, j, h], [e, j + 1, h], [x, j + 1, h]], [0, 0, -1]);                                   // the underside faces down, the risers face the middle of the hall
+    for (let z = Math.min(h, n); z < Math.max(h, n); z++) rowOf(row++, (x, e) => [[x, j + 1, z], [e, j + 1, z], [e, j + 1, z + 1], [x, j + 1, z + 1]], [0, n > h ? 1 : -1, 0]);
+    if (bay && j < 36 && vaultAt(j) < h) for (const X of [0, W]) q.push([[[X, j, vaultAt(j)], [X, j + 1, vaultAt(j)], [X, j + 1, h], [X, j, h]], SHINY | 0xdedcd2, [X ? -1 : 1, 0, 0]]);   // the cheeks of the door bay
   }
   return meshOf('vault' + (bay ? 1 : 0), q, W, L, SPRING + RISE);
 }
-function lunetteMesh() {                                                      // the tiled wall above the tunnel mouth, up to the vault
+function lunetteMesh(dir) {                                                      // the tiled wall above the tunnel mouth, up to the vault
   const s = sprite('vault', 64, 32), q = [];
-  for (let z = WH * VPU; z < SPRING + RISE; z++) for (let j = 0; j < 256; j++) if (vaultAt(j) > z) q.push([[[32, j, z], [32, j + 1, z], [32, j + 1, z + 1], [32, j, z + 1]], shade(s.c[(z % 32) * 64 + j % 64], .9)]);
-  return meshOf('lunette', q, 64, 256, SPRING + RISE);
+  for (let z = WH * VPU; z < SPRING + RISE; z++) for (let j = 0; j < 256; j++) if (vaultAt(j) > z) q.push([[[32, j, z], [32, j + 1, z], [32, j + 1, z + 1], [32, j, z + 1]], s.c[(z % 32) * 64 + j % 64], [dir, 0, 0]]);
+  return meshOf('lunette' + dir, q, 64, 256, SPRING + RISE);
 }
-{ const track = [trackMesh(0), trackMesh(1)], vault = [vaultMesh(false), vaultMesh(true)], lunette = lunetteMesh();
+{ const track = [trackMesh(0), trackMesh(1)], vault = [vaultMesh(false), vaultMesh(true)];
   let x0 = 99, x1 = 0, y0 = 99, y1 = 0;
   for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) if (vaulted(cx, cy)) { x0 = Math.min(x0, cx); x1 = Math.max(x1, cx); y0 = Math.min(y0, cy); y1 = Math.max(y1, cy); }
   const mid = (y0 + y1 + 1) / 2 * CS;                                         // the vault spans the hall from wall to wall; the track is its southern half
@@ -229,7 +252,7 @@ function lunetteMesh() {                                                      //
     extras.push({ m: track[cx & 1], x: cx * CS + 8, y: (y1) * CS, lift: -PIT, r: 20 });
     extras.push({ m: vault[tile(cx, y0 - 1) === 'D' ? 1 : 0], x: cx * CS + 8, y: mid, lift: 0, r: 40 });
   }
-  extras.push({ m: lunette, x: x0 * CS - 8, y: mid, lift: 0, r: 40 }, { m: lunette, x: (x1 + 1) * CS - 8, y: mid, lift: 0, r: 40 });
+  extras.push({ m: lunetteMesh(1), x: x0 * CS - 8, y: mid, lift: 0, r: 40 }, { m: lunetteMesh(-1), x: (x1 + 1) * CS - 8, y: mid, lift: 0, r: 40 });
 }
 
 // ---------- models from front views ----------
@@ -265,14 +288,20 @@ function lathe(name, s) {                                                     //
 }
 const box = (name, s, D) => model(name, s.w, D, s.h, (x, y, z) => { const k = s.c[z * s.w + x]; return k < 0 ? null : y === 0 || y === D - 1 ? k : shade(k, .85); });
 // the Baron's machines: frames w and b walk, a attacks
-// frames: i at ease (not yet alerted), w and b advancing with the gun levelled at you, a firing; g0.. are the pieces it breaks into
-const GIBS = {};
+// The machines. At ease (not yet alerted) each is one model. Once alerted it is three: the upper body with its gun levelled
+// (or firing), and two legs that swing from the hip. _d1 and _d2 are the same upper body with plates shot away.
+const GIBS = {}, HIP = {};
+const battered = (fn, lvl) => (x, y, z) => { const c = fn(x, y, z); if (c == null) return null; const n = noise3(x >> 2, z >> 2, 5) * .7 + noise3(x >> 1, z >> 1, 9) * .3; return n < lvl * .07 ? null : n < lvl * .14 ? shade(c & 0xffffff, .3) : c; };
 for (const [n, T, legs] of [['automate', 12, .36], ['scaphandre', 24, .34], ['colosse', 30, .34], ['lanterne', 0, 0]]) {
-  const thick = s => T || Math.round(s.w * .7), o = s => ({ legs, round: T ? .9 : 1.1, back: ART.rects[n + '_back'] && sprite(n + '_back', s.w, s.h, SPRITE_FLIP) });
+  const thick = s => T || Math.round(s.w * .7), o = s => ({ round: T ? .9 : 1.1, back: ART.rects[n + '_back'] && sprite(n + '_back', s.w, s.h, SPRITE_FLIP) });
   const pose = k => sprite(ART.rects[n + k] ? n + k : n, 0, 0, SPRITE_FLIP), ease = pose(''), aim = pose('_aim'), shoot = ART.rects[n + '_fire'] ? pose('_fire') : aim;
-  const add = (f, s, st) => { const m = inflate(s, thick(s), o(s)); model(`${n}_${f}`, m.W, m.L, m.H, m.fn(st)); };
-  add('i', ease, 0); add('w', n === 'lanterne' ? ease : aim, -1); add('b', n === 'lanterne' ? ease : aim, 1); add('a', shoot, 0);
-  GIBS[n] = [];                                                              // cut the figure into a grid of chunks
+  const part = (s, keep) => ({ w: s.w, h: s.h, c: Int32Array.from(s.c, (k, i) => keep(i % s.w, i / s.w | 0) ? k : -1) });   // the same canvas with everything else cut away, so the parts line up
+  const add = (name, s) => { const m = inflate(s, thick(s), o(s)), fn = m.fn(0); model(name, m.W, m.L, m.H, fn); return [m, fn]; };
+  add(`${n}_i`, ease);
+  const hip = HIP[n] = Math.round(aim.h * legs);
+  for (const [k, s] of [['aim', aim], ['fire', shoot]]) { const [m, fn] = add(`${n}_${k}`, part(s, (x, z) => z >= hip)); for (const d of [1, 2]) model(`${n}_${k}_d${d}`, m.W, m.L, m.H, battered(fn, d)); }
+  if (legs) { add(n + '_ll', part(aim, (x, z) => z < hip && x < aim.w / 2)); add(n + '_lr', part(aim, (x, z) => z < hip && x >= aim.w / 2)); }
+  GIBS[n] = [];                                                              // and the chunks it flies apart into
   const cols = n === 'lanterne' ? 2 : 3, rows = n === 'lanterne' ? 2 : 4, cw = Math.ceil(ease.w / cols), ch = Math.ceil(ease.h / rows);
   for (let r = 0; r < rows; r++) for (let q = 0; q < cols; q++) {
     const c = new Int32Array(cw * ch).fill(-1); let px = 0;
@@ -288,6 +317,7 @@ for (const n of ['bullets', 'shells', 'cells']) { const s = sprite(n); box('a_' 
 { const s = sprite('helmet'), m = inflate(s, Math.round(s.w * .8), { round: 1.2 }); model('a_helmet', m.W, m.L, m.H, m.fn(0)); }
 lathe('a_wine', sprite('wine')); lathe('a_lamp', sprite('lamp')); lathe('a_drum', sprite('drum')); lathe('a_column', sprite('column'));
 box('a_cask', sprite('cask'), 44); lathe('a_table', sprite('table')); box('a_exit', sprite('exit'), 28);
+lathe('a_chandelier', sprite('chandelier')); box('a_arch', sprite('arch', WV / 2 + 4), 8); box('a_rack', sprite('rack'), 40); box('a_workbench', sprite('workbench'), 16); box('a_train', sprite('train'), 36);
 lathe('a_hang', sprite('hanglamp')); lathe('a_lantern', sprite('lantern')); lathe('a_bin', sprite('bin')); lathe('a_signal', sprite('signal')); box('a_bench', sprite('bench'), 14);
 { const s = sprite('crate'); box('a_crate', s, s.w); }
 // shots, sparks and debris stay simple shapes, at half scale so they sit with the finer models
@@ -299,11 +329,11 @@ model('a_oil', 2, 2, 2, () => 0x17120e, .3);                                    
 for (const [i, k] of [[1, .5], [2, .85]]) model('a_puff' + i, 5, 5, 5, (x, y, z) => Math.hypot(x - 2, y - 2, z - 2) < 2.6 ? (noise3(x, y, z + i) > .5 ? 0x8a8780 : 0x6a6762) : null, k);
 const blot = (r, dark, sheen) => (x, y) => { const d = Math.hypot(x - r, y - r) + noise3(x >> 1, y >> 1, r) * r * .5; return d > r ? null : noise3(x, y, 7) > .86 ? sheen : dark; };
 model('a_pool', 28, 28, 1, blot(14, 0x120e0b, 0x3a3128)); model('a_scorch', 44, 44, 1, blot(22, 0x0c0a09, 0x1e1a17)); model('a_hole', 2, 2, 2, () => 0x0e0c0b, .3);
-for (const n of ['a_shot', 'a_spark', 'a_shell', 'a_bit', 'a_smoke', 'a_bolt', 'a_sparkle', 'a_ember']) MODEL_DEFS[n].bright = true;   // these make their own light
+for (const n of ['a_shot', 'a_spark', 'a_shell', 'a_bolt']) { const d = MODEL_DEFS[n], f = d.fn; d.fn = (x, y, z) => { const c = f(x, y, z); return c == null ? null : c | GLOW; }; }   // shots make their own light
 // weapons are relief cards cut from the first-person sheet: always seen from behind, exactly as drawn
 const WEAPON_VOX = 0.085;
 for (const n of ['w_pistol', 'w_shotgun', 'w_smg', 'w_tesla']) { const m = inflate(sprite(n, 0, 0, SPRITE_FLIP), 8, { even: true }); model(n, m.W, m.L, m.H, m.fn(0), WEAPON_VOX); }
-model('w_flash', 7, 4, 7, (x, y, z) => Math.abs(x - 3) + Math.abs(z - 3) < 4 - y * 0.6 ? (Math.abs(x - 3) + Math.abs(z - 3) < 2 ? 0xffffff : 0xffcf5c) : null, 0.3); MODEL_DEFS.w_flash.bright = true;
+model('w_flash', 7, 4, 7, (x, y, z) => Math.abs(x - 3) + Math.abs(z - 3) < 4 - y * 0.6 ? (Math.abs(x - 3) + Math.abs(z - 3) < 2 ? GLOW | 0xffffff : GLOW | 0xffcf5c) : null, 0.3);
 const MESH = {}, mesh = n => MESH[n] || (MESH[n] = buildMesh(MODEL_DEFS[n]));
 
 // ---------- things in the level ----------
@@ -311,18 +341,19 @@ const C = (cx, cy, ox = 0, oy = 0) => ({ x: cx * CS + 8 + ox, y: cy * CS + 8 + o
 // ---------- light: every lamp is placed by hand, and its light is baked into the floors, ceilings and walls ----------
 const WARM = [1, .88, .62], AMBER = [1, .68, .38], COLD = [.45, .9, 1];
 const FIX = [];                                                              // lamps: a model, where it stands or what height it hangs from, and the light it gives
-for (let cx = 2; cx <= 14; cx += 2) FIX.push({ model: 'a_hang', x: cx * CS, y: 28 * CS, hang: (SPRING + RISE) * VOX, R: 66, I: .55, col: WARM });
-for (const [cx, cy] of [[7, 4], [8, 7], [2, 8], [8, 14], [5, 12], [11, 9], [4, 2], [10, 4]]) FIX.push({ model: 'a_lantern', ...C(cx, cy), hang: WH, R: 50, I: .8, col: AMBER });
-for (const [cx, cy] of [[18, 18], [22, 18], [20, 15], [20, 21], [14, 18], [2, 18]]) FIX.push({ model: 'a_lantern', ...C(cx, cy), hang: WH, R: 56, I: .9, col: AMBER });
-for (const [cx, cy, ox] of [[26, 9, -4], [33, 9, 4], [28, 5, 0], [32, 13, 0]]) FIX.push({ model: 'a_lamp', ...C(cx, cy, ox, -5), R: 58, I: .85, col: WARM });
-const lights = FIX.map(f => ({ x: f.x, y: f.y, R: f.R, I: f.I, col: f.col }));
+for (let cx = 2; cx <= 14; cx += 2) FIX.push({ model: 'a_hang', x: cx * CS, y: 28 * CS, hang: (SPRING + RISE) * VOX, z: (SPRING + RISE) * VOX - 6, R: 66, I: .45, col: WARM });
+for (const [cx, cy] of [[7, 4], [8, 7], [2, 8], [8, 14], [5, 12], [11, 9], [4, 2], [10, 4]]) FIX.push({ model: 'a_lantern', ...C(cx, cy), hang: LOW, z: LOW - 5, R: 50, I: .8, col: AMBER, flick: 1 });
+for (const [cx, cy] of [[18, 18], [22, 18], [20, 15], [20, 21], [14, 18], [2, 18]]) FIX.push({ model: 'a_lantern', ...C(cx, cy), hang: WH, z: WH - 5, R: 56, I: .9, col: AMBER, flick: 1 });
+for (const [cx, cy] of [[20, 9], [18, 3], [22, 3]]) FIX.push({ model: 'a_chandelier', x: cx * CS + 8, y: cy * CS + 8, hang: WH, z: WH - 8, R: 80, I: .55, col: WARM });
+for (const [cx, cy, ox] of [[26, 9, -4], [33, 9, 4], [28, 5, 0], [32, 13, 0]]) FIX.push({ model: 'a_lamp', ...C(cx, cy, ox, -5), z: 16, R: 58, I: .85, col: WARM });
+const lights = FIX.map(f => ({ x: f.x, y: f.y, z: f.z, R: f.R, I: f.I, col: f.col, flick: f.flick, air: 1 }));
 for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {            // sconces, lit windows and Tesla tubes on the walls
   const t = tile(cx, cy), k = { L: [40, .65, WARM], X: [38, .5, WARM], T: [42, .6, COLD], Y: [42, .5, COLD] }[t];
-  if (k) for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isFloor(tile(cx + sx, cy + sy))) lights.push({ x: cx * CS + 8 + sx * 11, y: cy * CS + 8 + sy * 11, R: k[0], I: k[1], col: k[2] });
+  if (k) for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isFloor(tile(cx + sx, cy + sy))) lights.push({ x: cx * CS + 8 + sx * 11, y: cy * CS + 8 + sy * 11, z: 13, R: k[0], I: k[1], col: k[2], air: .5 });
 }
 for (let j = 1; j < GH; j += 2) for (let i = 1; i < GW; i += 2) {            // the lamps painted on the flat ceilings sit where four cells meet
   const c = [[i - 1, j - 1], [i, j - 1], [i - 1, j], [i, j]].find(([a, b]) => 'wki'.includes(tile(a, b)) || (tile(a, b) === 'm' && !vaulted(a, b)));
-  if (c) lights.push({ x: i * CS + (c[0] < i ? -1 : 1), y: j * CS + (c[1] < j ? -1 : 1), R: 60, I: .6, col: WARM });
+  if (c) lights.push({ x: i * CS + (c[0] < i ? -1 : 1), y: j * CS + (c[1] < j ? -1 : 1), z: WH - 3, R: 60, I: .28, col: WARM, air: .5 });
 }
 const AMBIENT = { m: [.36, .38, .44], r: [.26, .27, .32], c: [.27, .23, .2], b: [.25, .21, .19], w: [.42, .38, .34], k: [.42, .38, .34], g: [.5, .46, .62], o: [.5, .46, .62], i: [.3, .32, .37] };
 const LS = 2, LW = SIZE / LS, LM = new Float32Array(LW * LW * 3);            // the light map: one sample every two units
@@ -331,30 +362,33 @@ const LS = 2, LW = SIZE / LS, LM = new Float32Array(LW * LW * 3);            // 
     const x = gx * LS + 1, y = gy * LS + 1, cx = x >> 4, cy = y >> 4; let t = tile(cx, cy); if (t === 'D') t = doorAt(cx, cy).floor;
     if (!isFloor(t)) continue;
     const a = AMBIENT[t], i = (gy * LW + gx) * 3; let r = a[0], g = a[1], b = a[2];
-    for (const l of lights) { const d = Math.hypot(l.x - x, l.y - y); if (d < l.R && canSee(l.x, l.y, x, y)) { const k = l.I * (1 - d / l.R) ** 1.5; r += l.col[0] * k; g += l.col[1] * k; b += l.col[2] * k; } }
+    for (const l of lights) { const d = Math.hypot(l.x - x, l.y - y); if (d < l.R && canSee(l.x, l.y, x, y)) { const k = l.I * (1 - d / l.R) ** 1.5 * .3; r += l.col[0] * k; g += l.col[1] * k; b += l.col[2] * k; } }
     LM[i] = Math.min(1.08, r); LM[i + 1] = Math.min(1.08, g); LM[i + 2] = Math.min(1.08, b); ok[gy * LW + gx] = 1;
   }
   for (let pass = 0; pass < 4; pass++) { const add = [];                       // spread the light a little way into the walls so smoothing does not pull darkness out of them
     for (let gy = 1; gy < LW - 1; gy++) for (let gx = 1; gx < LW - 1; gx++) if (!ok[gy * LW + gx]) { let n = 0, r = 0, g = 0, b = 0; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const j = (gy + dy) * LW + gx + dx; if (ok[j]) { n++; r += LM[j * 3]; g += LM[j * 3 + 1]; b += LM[j * 3 + 2]; } } if (n) add.push([gy * LW + gx, r / n, g / n, b / n]); }
     for (const [j, r, g, b] of add) { LM[j * 3] = r; LM[j * 3 + 1] = g; LM[j * 3 + 2] = b; ok[j] = 1; } }
-  const cv = mkCanvas(LW, LW), g2 = cv.getContext('2d'), img = g2.createImageData(LW, LW);
-  for (let j = 0; j < LW * LW; j++) { img.data[j * 4] = Math.min(255, LM[j * 3] * 255); img.data[j * 4 + 1] = Math.min(255, LM[j * 3 + 1] * 255); img.data[j * 4 + 2] = Math.min(255, LM[j * 3 + 2] * 255); img.data[j * 4 + 3] = 255; }
-  g2.putImageData(img, 0, 0);
-  for (const tex of [floorTex, ceilTex]) { const g = tex.getContext('2d'); g.globalCompositeOperation = 'multiply'; g.imageSmoothingEnabled = true; g.drawImage(cv, 0, 0, tex.width, tex.height); g.globalCompositeOperation = 'source-over'; }
-  for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {            // multiplying filled the holes in: cut them out again
-    let t = tile(cx, cy); if (t === 'D') t = doorAt(cx, cy).floor;
-    if (t === 'r') floorTex.getContext('2d').clearRect(cx * WV, cy * WV, WV, WV);
-    if (t === 'g' || t === 'o' || vaulted(cx, cy) || (!isFloor(t) && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([sx, sy]) => 'goH'.includes(tile(cx + sx, cy + sy)) || vaulted(cx + sx, cy + sy)))) ceilTex.getContext('2d').clearRect(cx * WV, cy * WV, WV, WV);
-  } }
+}
+const LMU8 = Uint8Array.from(LM, v => Math.min(255, v * 255));             // the renderer samples this as its ambient light
 const lightAt = (x, y) => {                                                  // the baked light at a point, smoothed between samples
   const fx = Math.max(0, Math.min(LW - 1.001, (x - 1) / LS)), fy = Math.max(0, Math.min(LW - 1.001, (y - 1) / LS)), gx = fx | 0, gy = fy | 0, u = fx - gx, v = fy - gy, i = (gy * LW + gx) * 3, out = [0, 0, 0];
   for (let k = 0; k < 3; k++) out[k] = (LM[i + k] * (1 - u) + LM[i + 3 + k] * u) * (1 - v) + (LM[i + LW * 3 + k] * (1 - u) + LM[i + LW * 3 + 3 + k] * u) * v;
   return out;
 };
-for (const p of panels) { const ax = Math.cos(p.rot) * 7, ay = Math.sin(p.rot) * 7, bx = p.x + p.nx * 2, by = p.y + p.ny * 2; p.pose = { lift: p.lift, litA: lightAt(bx - ax, by - ay), litB: lightAt(bx + ax, by + ay) }; }
-for (const p of posts) p.pose = { litA: lightAt(p.x, p.y) };
-for (const e of extras) e.pose = { lift: e.lift, litA: lightAt(e.x, e.y).map(v => v * .9) };
-const HEDGE_LIT = { litA: [.62, .6, .7] };                                  // hedges are solid cells, outside the light map: give them the courtyard's dusk
+// a model matrix: at x, y, height z, turned by `rot` about the vertical; `tilt` then leans it about its local x axis at height `pz`
+const M4 = (x, y, z, rot, tilt = 0, pz = 0, py = 0) => {
+  const c = Math.cos(rot), s = Math.sin(rot), ct = Math.cos(tilt), st = Math.sin(tilt), ty = py - py * ct + pz * st, tz = pz - py * st - pz * ct;
+  return new Float32Array([c, s, 0, 0, -s * ct, c * ct, st, 0, s * st, -c * st, ct, 0, x - s * ty, y + c * ty, z + tz, 1]);
+};
+for (const p of panels) p.M = M4(p.x, p.y, p.lift, p.rot);
+for (const p of posts) p.M = M4(p.x, p.y, 0, 0);
+for (const e of extras) e.M = M4(e.x, e.y, e.lift, 0);
+for (const h of hedges) h.M = M4(h.x, h.y, 0, 0);
+const train = { x: -400, next: 14, sounded: false };                           // a train comes through the station every so often
+const steamers = [];                                                         // pipework that vents steam
+for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) if (tile(cx, cy) === 'G') for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isFloor(tile(cx + sx, cy + sy))) steamers.push({ x: cx * CS + 8 + sx * 9, y: cy * CS + 8 + sy * 9, t: Math.random() * 6 });
+const flashes = [];                                                          // short-lived lights: muzzle flashes, explosions
+const flashAt = (x, y, z, R, I, col, life) => { flashes.push({ x, y, z, R, I, col, t: 0, life }); if (flashes.length > 8) flashes.shift(); };
 
 const ENEMY = {
   automate: { hp: 30, speed: 40, r: 5, range: 220, rate: 1.9, dmg: 6, shots: 1, shot: 'a_shot', score: 1 },
@@ -373,10 +407,15 @@ const say = t => { logLines.push({ t, life: 3.2 }); if (logLines.length > 3) log
 function reset() {
   enemies = []; items = []; decor = []; shots = []; fx = []; debris = []; logLines = [];
   for (const d of doors) { d.open = 0; d.hold = 0; d.unlocked = !d.key; }
-  const E = (type, cx, cy, ox, oy) => enemies.push({ type, ...C(cx, cy, ox, oy), ...ENEMY[type], yaw: 0, awake: false, cool: 1 + rnd(), t: rnd() * 5, seeT: rnd() * .2, see: false, flash: 0, atk: 0, strafe: rnd() < .5 ? 1 : -1 });
+  for (const p of damaged.splice(0)) restore(p);                                                         // the walls are whole again
+  const E = (type, cx, cy, ox, oy) => enemies.push({ type, ...C(cx, cy, ox, oy), ...ENEMY[type], hp0: ENEMY[type].hp, yaw: 0, awake: false, cool: 1 + rnd(), t: rnd() * 5, seeT: rnd() * .2, see: false, flash: 0, atk: 0, strafe: rnd() < .5 ? 1 : -1 });
   const I = (kind, cx, cy, ox, oy) => items.push({ kind, ...C(cx, cy, ox, oy) });
   const D = (model, cx, cy, ox = 0, oy = 0, o = {}) => decor.push({ model, ...C(cx, cy, ox, oy), r: 4, solid: true, rot: 0, ...o });
-  for (const f of FIX) decor.push({ model: f.model, x: f.x, y: f.y, r: 2, solid: !f.hang, rot: 0, lift: f.hang ? f.hang - MODEL_DEFS[f.model].H * VOX : 0 });   // hanging lamps are out of reach
+  for (const f of FIX) decor.push({ model: f.model, x: f.x, y: f.y, r: 2, solid: !f.hang, rot: 0, lift: f.hang ? f.hang - MODEL_DEFS[f.model].H * VOX : 0, swing: f.flick ? MODEL_DEFS[f.model].H * VOX : 0 });   // hanging lamps are out of reach; lanterns sway on their chains
+  for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) if (tile(cx, cy) === 'c') {             // an arch across each stretch of catacomb tunnel
+    const ew = !isFloor(tile(cx - 1, cy)) && !isFloor(tile(cx + 1, cy)), ns = !isFloor(tile(cx, cy - 1)) && !isFloor(tile(cx, cy + 1));
+    if (ew !== ns) decor.push({ model: 'a_arch', x: cx * CS + 8, y: cy * CS + 8, r: 0, solid: false, rot: ew ? 0 : Math.PI / 2 });
+  }
   // Metro
   E('automate', 10, 26); E('automate', 13, 27); I('bullets', 6, 27); I('baguette', 12, 27); D('a_crate', 14, 26, 2, -2);
   for (const cx of [3, 5, 11, 13]) D('a_bench', cx, 26, 0, -5, { r: 5 }); D('a_bin', 7, 26, 4, -5, { r: 2 }); D('a_bin', 9, 26, -4, -5, { r: 2 }); D('a_signal', 1, 27, -4, 6, { r: 1.5 }); D('a_signal', 14, 27, 4, 6, { r: 1.5 });
@@ -387,7 +426,8 @@ function reset() {
   I('key_blue', 3, 1); I('baguette', 7, 1); I('shells', 5, 9); I('bullets', 8, 10); I('helmet', 10, 4); I('wine', 11, 5);
   // wine cellar
   E('scaphandre', 20, 18); E('automate', 17, 15); E('automate', 23, 21); E('automate', 23, 15); E('lanterne', 20, 21);
-  for (const [x, y] of [[16, 14], [24, 14], [16, 22], [24, 22], [19, 14]]) D('a_cask', x, y, 0, 0, { r: 6 });
+  for (const [x, y] of [[16, 14], [24, 14], [16, 22], [24, 22]]) D('a_rack', x, y, 0, y < 18 ? -2 : 2, { r: 7 }); D('a_cask', 19, 14, 0, 0, { r: 6 }); D('a_cask', 21, 22, 0, 0, { r: 6 });
+  D('a_workbench', 27, 24, 0, 3, { r: 5 }); D('a_workbench', 2, 16, 0, -4, { r: 5 });
   for (const [x, y] of [[20, 16], [17, 19], [23, 18], [21, 20]]) D('a_drum', x, y, 0, 0, { drum: true, hp: 12 });
   I('bullets', 16, 18); I('baguette', 24, 18); I('shells', 20, 22);
   // chateau
@@ -417,7 +457,7 @@ function sfx(kind) {
   const noise = (dur, vol, lp) => { const n = audio.createBufferSource(), b = audio.createBuffer(1, audio.sampleRate * dur, audio.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length); n.buffer = b; const f = audio.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lp; n.connect(f); f.connect(g); g.gain.setValueAtTime(vol, t); n.start(t); };
   ({ pistol: () => { noise(.12, .5, 2400); tone('square', 320, 60, .1, .2); }, shotgun: () => { noise(.3, .8, 1400); tone('square', 160, 40, .2, .3); }, smg: () => { noise(.07, .4, 3000); tone('square', 380, 90, .06, .15); },
     tesla: () => tone('sawtooth', 900, 200, .12, .2), hit: () => tone('square', 700, 200, .05, .12), die: () => { noise(.35, .5, 900); tone('sawtooth', 300, 40, .35, .2); }, boom: () => { noise(.6, 1, 500); tone('sine', 120, 30, .5, .5); },
-    pickup: () => tone('triangle', 520, 1040, .12, .2), key: () => { tone('triangle', 660, 1320, .25, .25); }, door: () => tone('sawtooth', 70, 110, .35, .12), hurt: () => tone('sawtooth', 220, 90, .2, .3), enemy: () => tone('square', 180, 120, .12, .1), wake: () => tone('square', 240, 480, .15, .08), click: () => tone('square', 900, 800, .03, .08),
+    pickup: () => tone('triangle', 520, 1040, .12, .2), key: () => { tone('triangle', 660, 1320, .25, .25); }, door: () => tone('sawtooth', 70, 110, .35, .12), train: () => { noise(2.6, .7, 320); tone('sawtooth', 55, 48, 2.4, .25); }, hurt: () => tone('sawtooth', 220, 90, .2, .3), enemy: () => tone('square', 180, 120, .12, .1), wake: () => tone('square', 240, 480, .15, .08), click: () => tone('square', 900, 800, .03, .08),
   }[kind] || (() => {}))();
 }
 
@@ -463,7 +503,8 @@ function hurtPlayer(d) {
   if (P.hp <= 0) { P.hp = 0; P.dead = true; state = 'dead'; showScreen(); }
 }
 function explode(x, y) {
-  sfx('boom'); burst(x, y, 6, 14, 'a_smoke'); sparks(x, y, 5, 34); smoke(x, y, 3, 9); litter('a_scorch', x, y, .05);
+  sfx('boom'); burst(x, y, 6, 14, 'a_smoke');
+  for (const p of panels) if (p.far && Math.hypot(p.x - x, p.y - y) < 36) for (let i = 0; i < 3; i++) chip(p, rand(10, 118), rand(4, 90), rand(5, 10));   // the blast tears at the walls around it flashAt(x, y, 8, 170, 4.5, AMBER, .5); sparks(x, y, 5, 34); smoke(x, y, 3, 9); litter('a_scorch', x, y, .05);
   P.shake = Math.max(P.shake, 2.2 * Math.max(0, 1 - Math.hypot(P.x - x, P.y - y) / 160));
   for (const e of enemies) if (!e.dead) { const d = Math.hypot(e.x - x, e.y - y); if (d < 46) hurtEnemy(e, 90 * (1 - d / 50), x, y); }
   for (const d of decor) if (d.drum && !d.gone && Math.hypot(d.x - x, d.y - y) < 40) { d.hp = 0; d.fuse = .15; }
@@ -483,7 +524,7 @@ function fire() {
   const w = WEAPONS[P.weapon];
   if (P.cool > 0 || P.dead) return;
   if (P.ammo[w.ammo] <= 0) { P.cool = .25; sfx('click'); const alt = [3, 2, 1, 0].find(i => P.has[i] && P.ammo[WEAPONS[i].ammo] > 0); if (alt != null) P.weapon = alt; return; }
-  P.ammo[w.ammo]--; P.cool = w.rate; P.kick = 1; P.flash = .06; P.shake = Math.max(P.shake, P.weapon === 1 ? .7 : .15); sfx(['pistol', 'shotgun', 'smg', 'tesla'][P.weapon]);
+  P.ammo[w.ammo]--; P.cool = w.rate; P.kick = 1; P.flash = .06; flashAt(P.x + Math.cos(P.yaw) * 7, P.y + Math.sin(P.yaw) * 7, 8, 110, P.weapon === 1 ? 3 : 2.2, P.weapon === 3 ? COLD : WARM, .1); P.shake = Math.max(P.shake, P.weapon === 1 ? .7 : .15); sfx(['pistol', 'shotgun', 'smg', 'tesla'][P.weapon]);
   for (const e of enemies) if (!e.dead && Math.hypot(e.x - P.x, e.y - P.y) < 260) e.awake = true;       // gunfire wakes the neighbourhood
   for (let p = 0; p < w.pellets; p++) {
     const a = P.yaw + (Math.random() - .5) * 2 * w.spread, dx = Math.cos(a), dy = Math.sin(a), wall = rayWall(P.x, P.y, a, 400);
@@ -500,7 +541,12 @@ function fire() {
       if (!w.pierce) { end = along; break; }
     }
     if (w.pierce) for (let d = 10; d < end; d += 9) fx.push({ model: 'a_bolt', x: P.x + dx * d, y: P.y + dy * d, lift: 7 + Math.random() * 2, vx: 0, vy: 0, vz: 0, t: 0, life: .09, rot: a - Math.PI / 2 });
-    else if (end >= wall) { const ix = P.x + dx * (end - 1.2), iy = P.y + dy * (end - 1.2), iz = FP.eye - 2 + rand(-3, 3); sparks(ix, iy, iz, 5, a + Math.PI, 2); smoke(ix, iy, iz, 1); if (!inPit(ix, iy)) litter('a_hole', P.x + dx * (end - .4), P.y + dy * (end - .4), iz); }   // the wall chips, sparks and keeps the mark
+    else if (end >= wall) {                                         // the wall is chipped away where the shot lands, and throws out its own rubble
+      const ix = P.x + dx * (end - 1.2), iy = P.y + dy * (end - 1.2), iz = FP.eye - 1 + rand(-3.5, 3.5), hit = panelAt(P.x + dx * end, P.y + dy * end, dx, dy);
+      sparks(ix, iy, iz, 4, a + Math.PI, 2); smoke(ix, iy, iz, 1);
+      const k = hit && chip(hit[0], hit[1], iz * WPU, P.weapon === 3 ? 5 : P.weapon === 1 ? 3 : 3.6);
+      if (k) for (let i = 0; i < 5; i++) { const b = a + Math.PI + rand(-1, 1), v = rand(15, 60); spawn('chip', ix, iy, iz, { k: [rand(.3, .7), (k >> 16 & 255) / 255, (k >> 8 & 255) / 255, (k & 255) / 255, 0], vx: Math.cos(b) * v, vy: Math.sin(b) * v, vz: rand(-5, 40), g: 220, bounce: true, life: rand(.8, 1.6) }); }
+    }
   }
 }
 const PICK = {
@@ -526,7 +572,12 @@ function update(dt) {
   const wx = (Math.cos(P.yaw) * f - Math.sin(P.yaw) * s) / l * 125, wy = (Math.sin(P.yaw) * f + Math.cos(P.yaw) * s) / l * 125;
   P.vx += (wx - P.vx) * Math.min(1, 10 * dt); P.vy += (wy - P.vy) * Math.min(1, 10 * dt);
   moveBody(P, P.vx * dt, P.vy * dt, 4.5, enemies);
-  P.bob += Math.hypot(P.vx, P.vy) * dt * 0.09; P.cool -= dt; P.kick = Math.max(0, P.kick - dt * 5); P.shake = Math.max(0, P.shake - dt * 4); P.flash -= dt; P.pain = Math.max(0, P.pain - dt * 0.9); P.grin -= dt;
+  P.bob += Math.hypot(P.vx, P.vy) * dt * 0.09; P.cool -= dt; P.kick = Math.max(0, P.kick - dt * 5); P.shake = Math.max(0, P.shake - dt * 4);
+  for (let i = flashes.length - 1; i >= 0; i--) if ((flashes[i].t += dt) > flashes[i].life) flashes.splice(i, 1);
+  train.next -= dt;                                                                                       // the train: out of one tunnel, through the station, into the other
+  if (train.next <= 0) { train.x = -220; train.next = rand(38, 60); train.sounded = false; }
+  if (train.x < 620) { train.x += 170 * dt; const near = Math.hypot(P.x - train.x - 50, P.y - 464); if (near < 150) P.shake = Math.max(P.shake, .5 * (1 - near / 150)); if (!train.sounded && train.x > -60) { train.sounded = true; sfx('train'); } }
+  for (const s of steamers) if ((s.t -= dt) < 0) { s.t = rand(3, 8); if (Math.hypot(s.x - P.x, s.y - P.y) < 150) for (let i = 0; i < 6; i++) spawn(Math.random() < .5 ? 'a_puff1' : 'a_puff2', s.x, s.y, rand(11, 14), { vx: rand(-4, 4), vy: rand(-4, 4), vz: rand(6, 16), life: rand(.8, 1.6), steam: 1 }); } P.flash -= dt; P.pain = Math.max(0, P.pain - dt * 0.9); P.grin -= dt;
   if (k[' '] || k.control || k.fire) fire();
   // doors slide open for the player (with the right key) and for enemies that are hunting
   for (const d of doors) {
@@ -548,7 +599,7 @@ function update(dt) {
     e.yaw = Math.atan2(dy, dx);
     e.cool -= dt;
     if (e.see && dist < e.range && e.cool <= 0 && !P.dead) {         // fire a volley of slow, dodgeable shots
-      e.cool = e.rate * (.8 + Math.random() * .5); e.atk = .22; sfx('enemy');
+      e.cool = e.rate * (.8 + Math.random() * .5); e.atk = .22; sfx('enemy'); flashAt(e.x + Math.cos(e.yaw) * (e.r + 3), e.y + Math.sin(e.yaw) * (e.r + 3), 8 + (e.fly || 0), 80, 1.8, WARM, .12);
       for (let i = 0; i < e.shots; i++) { const a = e.yaw + (i - (e.shots - 1) / 2) * .16 + (Math.random() - .5) * .08; shots.push({ model: e.shot, x: e.x + Math.cos(a) * (e.r + 3), y: e.y + Math.sin(a) * (e.r + 3), vx: Math.cos(a) * 115, vy: Math.sin(a) * 115, dmg: e.dmg, lift: 7 + (e.fly || 0), t: 0 }); }
       if (e.boss && Math.random() < .35) for (let i = 0; i < 12; i++) { const a = i / 12 * 6.283; shots.push({ model: 'a_spark', x: e.x + Math.cos(a) * 12, y: e.y + Math.sin(a) * 12, vx: Math.cos(a) * 90, vy: Math.sin(a) * 90, dmg: 8, lift: 7, t: 0 }); }
     }
@@ -560,7 +611,7 @@ function update(dt) {
       for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const v = flow[cx + a + (cy + b) * GW]; if (v < best) { best = v; bx = cx + a; by = cy + b; } }
       const tx = bx * CS + 8 - e.x, ty = by * CS + 8 - e.y, tl = Math.hypot(tx, ty) || 1; mx = tx / tl; my = ty / tl;
     }
-    moveBody(e, mx * e.speed * dt, my * e.speed * dt, e.r, [P, ...enemies]);
+    e.moving = moveBody(e, mx * e.speed * dt, my * e.speed * dt, e.r, [P, ...enemies]);
     if (dist < e.r + 9 && e.cool < e.rate * .5 && !e.fly) { hurtPlayer(e.boss ? 22 : 10); e.cool = e.rate; }                                   // contact damage
   }
   for (let i = shots.length - 1; i >= 0; i--) {
@@ -590,39 +641,81 @@ function update(dt) {
 }
 
 // ---------- render ----------
-const scene = document.getElementById('scene'), R = Renderer(scene, SIZE), OPT = { scale: 1, explode: 1, zscale: 1, light: true, shade: true }, NOSHADE = { ...OPT, shade: false, light: false };
-const cam0 = { x: 0, y: 0, a: 0 };
+const scene = document.getElementById('scene'), R = AutomatesRenderer(scene, SIZE, GW, GH);
+if (R) R.setLightMap(LMU8, LW);
+const cubeBuf = new Float32Array(4096 * 8), smokeBuf = new Float32Array(512 * 8), cellBuf = new Uint8Array(GW * GH * 4);
+const FLOOR_SHINE = { m: .8, r: .15, b: .12, w: .45, o: .1, i: .6 };           // how polished each floor is
+// small particles are drawn as instanced cubes: size, r, g, b, glow
+const PARTICLE = { a_sparkle: [.4, 1, .95, .7, 1], a_ember: [.36, 1, .55, .17, 1], a_oil: [.55, .09, .07, .055, 0], a_bit: [.7, .88, .73, .27, 0], a_hole: [.6, .05, .045, .04, 0], a_smoke: [1.5, 1, .68, .25, 1] };
 function render(now) {
-  if (!R) { $('stats').textContent = 'WebGL is not available in this browser.'; return; }
-  const W = scene.width, H = scene.height, sh = P.shake || 0, eye = { x: P.x + (Math.random() - .5) * sh, y: P.y + (Math.random() - .5) * sh, yaw: P.yaw + (Math.random() - .5) * sh * .012 }, fxv = Math.cos(P.yaw), fyv = Math.sin(P.yaw);
-  R.begin(1, W / 2, H / 2, 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))) ? [.29, .22, .47] : [.05, .045, .06], eye, true);   // the background is the dusk sky out in the courtyard, and near-black indoors where only hairline seams could show it
-  R.ground(floorTex, cam0, 0); R.ground(ceilTex, cam0, WH);
-  let n = 0;
-  const vis = (x, y, r) => { const ex = x - P.x, ey = y - P.y, f = ex * fxv + ey * fyv; return f > -r && f < FP.far + r && Math.abs(ey * fxv - ex * fyv) < f * 0.9 + r + 8; };
-  const draw = (name, x, y, rot, pose, o) => { if (!vis(x, y, 12)) return; const d = MODEL_DEFS[name]; R.draw(mesh(name), x, y, rot, cam0, d.o || o || OPT, null, d.bright ? pose : { litA: lightAt(x, y), ...pose }); n++; };
-  for (const p of panels) if ((P.x - p.x) * p.nx + (P.y - p.y) * p.ny > 0 && vis(p.x, p.y, 12)) { const far = p.far && (P.x - p.x) ** 2 + (P.y - p.y) ** 2 > 130 * 130; R.draw(far ? p.far : p.m, p.x, p.y, p.rot, cam0, far ? FAR_O : WO, null, p.pose); n++; }   // only the sides that face the player; coarse ones in the distance
-  for (const p of posts) if (vis(p.x, p.y, 2)) { R.draw(p.m, p.x, p.y, 0, cam0, WO, null, p.pose); n++; }
-  for (const e of extras) if (vis(e.x, e.y, e.r)) { R.draw(e.m, e.x, e.y, 0, cam0, VO, null, e.pose); n++; }                 // the track and the vault
-  for (const h of hedges) draw('hedge', h.x, h.y, 0, HEDGE_LIT);
-  for (const d of doors) { const s = d.open * 14, name = d.key ? 'a_door_' + d.key : 'a_door'; draw(name, d.x + (d.vertical ? s : 0), d.y + (d.vertical ? 0 : s), d.vertical ? 0 : Math.PI / 2); }
-  for (const d of decor) if (!d.gone) draw(d.model, d.x, d.y, d.rot, d.lift ? { lift: d.lift } : null);
-  for (const it of items) draw(PICK[it.kind].model, it.x, it.y, now * 0.002, { lift: 3 + Math.sin(now * 0.004 + it.x) * 1.2 }, NOSHADE);
-  for (const e of enemies) if (!e.dead) {                              // a destroyed machine is only wreckage now
-    const frame = !e.awake ? 'i' : e.atk > 0 ? 'a' : (e.type === 'lanterne' ? now / 60 : e.t * 4) & 1 ? 'b' : 'w';
-    draw(`${e.type}_${frame}`, e.x, e.y, e.yaw - Math.PI / 2, { lift: e.fly ? e.fly + Math.sin(e.t * 3) * 1.5 : 0, flash: e.flash > 0 ? 0.8 : 0 });
+  if (!R) { $('stats').textContent = 'This needs WebGL 2, which this browser does not offer.'; return; }
+  const W = scene.width, H = scene.height, sh = P.shake || 0, time = now / 1000, fxv = Math.cos(P.yaw), fyv = Math.sin(P.yaw);
+  const eye = { x: P.x + (Math.random() - .5) * sh, y: P.y + (Math.random() - .5) * sh, yaw: P.yaw + (Math.random() - .5) * sh * .012, z: FP.eye };
+  for (let cy = 0, i = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++, i += 4) {                       // what blocks light this frame (doors open and close), and how shiny each floor is
+    const t = tile(cx, cy), d = t === 'D' ? doorAt(cx, cy) : null;
+    cellBuf[i] = d ? (d.open < .5 ? 255 : 0) : t === 'H' || isFloor(t) ? 0 : 255; cellBuf[i + 1] = (FLOOR_SHINE[d ? d.floor : t] || 0) * 255;
   }
-  for (const d of debris) draw(d.model, d.x, d.y, d.rot, { lift: d.lift });
-  for (const s of shots) draw(s.model, s.x, s.y, Math.atan2(s.vy, s.vx) - Math.PI / 2, { lift: s.lift }, NOSHADE);
-  for (const p of fx) draw(p.model, p.x, p.y, p.rot != null ? p.rot : p.a, { lift: p.lift }, NOSHADE);
-  // the weapon is drawn last over a cleared depth buffer so it never pokes into walls
+  let budget = 10;                                                     // rebuild the wall blocks that were hit, a few per frame so a burst of fire never stalls the picture
+  for (const p of damaged) { if (!p.todo.size) continue; const w = p.m.W, nx = w / BLK;
+    for (const i of p.todo) { if (budget-- <= 0) break; if (p.blocks[i]) R.free(p.blocks[i]); const bx = i % nx, bz = i / nx | 0; p.blocks[i] = panelMesh('own', { w, h: p.m.H, c: p.own.c }, 0, p.m.L, p.own.dep, [bx * BLK, bx * BLK + BLK, bz * BLK, bz * BLK + BLK]); p.todo.delete(i); }
+    p.ready = p.blocks.every(Boolean); }
+  R.setCells(cellBuf); R.begin(eye, FP.focal, FP.near, FP.far);
+  R.ground(floorTex, 0, 1); R.ground(ceilTex, WH, -1); R.ground(lowTex, LOW, -1);
+  let n = 0, nc = 0, ns = 0;
+  const vis = (x, y, r) => { const ex = x - P.x, ey = y - P.y, f = ex * fxv + ey * fyv; return f > -r && f < FP.far + r && Math.abs(ey * fxv - ex * fyv) < f * 0.9 + r + 8; };
+  const draw = (name, x, y, rot, lift, flash) => { if (!vis(x, y, 14)) return; const d = MODEL_DEFS[name]; R.draw(mesh(name), M4(x, y, lift || 0, rot), d.o ? d.o.vox : 1, flash); n++; };
+  const cube = (k, x, y, z) => { if (nc >= 4096 || !vis(x, y, 2)) return; cubeBuf.set([x, y, z, k[0], k[1], k[2], k[3], k[4]], nc++ * 8); };
+  for (const p of panels) if ((P.x - p.x) * p.nx + (P.y - p.y) * p.ny > 0 && vis(p.x, p.y, 12)) { const far = p.far && (P.x - p.x) ** 2 + (P.y - p.y) ** 2 > 130 * 130; if (!far && p.ready) for (const b of p.blocks) R.draw(b, p.M, 1 / WPU); else R.draw(far ? p.far : p.m, p.M, far ? .5 : 1 / WPU); n++; }   // only the sides that face the player; coarse ones in the distance
+  for (const p of posts) if (vis(p.x, p.y, 2)) { R.draw(p.m, p.M, 1 / WPU); n++; }
+  for (const e of extras) if (vis(e.x, e.y, e.r)) { R.draw(e.m, e.M, VOX); n++; }                        // the track and the vault
+  for (const h of hedges) if (vis(h.x, h.y, 14)) { R.draw(mesh('hedge'), h.M, VOX); n++; }
+  for (const d of doors) { const s = d.open * 14, name = d.key ? 'a_door_' + d.key : 'a_door'; draw(name, d.x + (d.vertical ? s : 0), d.y + (d.vertical ? 0 : s), d.vertical ? 0 : Math.PI / 2); }
+  for (const d of decor) if (!d.gone) { if (d.swing && vis(d.x, d.y, 8)) { R.draw(mesh(d.model), M4(d.x, d.y, d.lift, d.rot, Math.sin(time * 1.4 + d.x * .3) * .09, d.swing), VOX); n++; } else draw(d.model, d.x, d.y, d.rot, d.lift); }
+  for (const it of items) draw(PICK[it.kind].model, it.x, it.y, now * 0.002, 3 + Math.sin(now * 0.004 + it.x) * 1.2);
+  for (const e of enemies) if (!e.dead && vis(e.x, e.y, 14)) {         // a destroyed machine is only wreckage now
+    const rot = e.yaw - Math.PI / 2, fl = e.flash > 0 ? 0.8 : 0, lift = e.fly ? e.fly + Math.sin(e.t * 3) * 1.5 : 0;
+    if (!e.awake) { draw(e.type + '_i', e.x, e.y, rot, lift, fl); continue; }
+    const hurt = e.hp < e.hp0 * .34 ? '_d2' : e.hp < e.hp0 * .67 ? '_d1' : '', hip = HIP[e.type] * VOX, step = e.moving ? Math.sin(e.t * 9) : 0;
+    const lean = (e.atk > 0 ? -.16 * e.atk / .22 : 0) + (fl ? -.14 : 0) + (e.fly ? Math.sin(e.t * 2.3) * .1 : step * .03);   // recoil when it fires, a flinch when it is hit
+    R.draw(mesh(`${e.type}_${e.atk > 0 ? 'fire' : 'aim'}${hurt}`), M4(e.x, e.y, lift + Math.abs(step) * .35, rot, lean, hip), VOX, fl); n++;
+    if (HIP[e.type]) { R.draw(mesh(e.type + '_ll'), M4(e.x, e.y, lift, rot, step * .5, hip), VOX, fl); R.draw(mesh(e.type + '_lr'), M4(e.x, e.y, lift, rot, -step * .5, hip), VOX, fl); n += 2; }
+    if (hurt && Math.random() < (hurt === '_d2' ? .25 : .08)) sparks(e.x, e.y, lift + rand(8, 14), 1);                // a damaged machine spits sparks
+  }
+  if (train.x < 620) for (let i = 0; i < 3; i++) { const x = train.x + i * 31; if (x > 4 && x < 252) draw('a_train', x, 464, 0, -PIT + .8); }   // three carriages, hidden while they are inside the tunnels
+  for (const d of debris) { const k = PARTICLE[d.model]; if (k) cube(k, d.x, d.y, d.lift); else draw(d.model, d.x, d.y, d.rot, d.lift); }
+  for (const s of shots) draw(s.model, s.x, s.y, Math.atan2(s.vy, s.vx) - Math.PI / 2, s.lift);
+  for (const p of fx) {
+    const k = p.k || PARTICLE[p.model];
+    if (k) cube(k, p.x, p.y, p.lift);
+    else if (p.model[2] === 'p' && p.model[3] === 'u') { if (ns < 512 && vis(p.x, p.y, 6)) { const l = lightAt(p.x, p.y), a = 1 - p.t / p.life; smokeBuf.set([p.x, p.y, p.lift + 2, (p.model === 'a_puff2' ? 6 : 4) + p.t * 5, (p.steam ? .9 : .55) * l[0] + .12, (p.steam ? .9 : .53) * l[1] + .12, (p.steam ? .92 : .5) * l[2] + .12, (p.steam ? .35 : .6) * a], ns++ * 8); } }   // puffs of smoke
+    else draw(p.model, p.x, p.y, p.rot != null ? p.rot : p.a, p.lift);
+  }
+  R.cubes(cubeBuf, nc);
+  // the weapon is drawn last, in front of everything, so it never pokes into walls
   if (!P.dead) {
-    R.clearDepth();
+    R.front(true);
     const w = WEAPONS[P.weapon], sway = Math.sin(P.bob) * 0.7, back = P.kick * 1.2, o = w.off;
     const wx = P.x + fxv * (o[0] - back) - fyv * (o[1] + sway), wy = P.y + fyv * (o[0] - back) + fxv * (o[1] + sway), lift = FP.eye - o[0] * (H / 2 / FP.focal) + o[2] + Math.abs(Math.cos(P.bob)) * 0.5 + P.kick * 0.8;
-    R.draw(mesh(w.model), wx, wy, P.yaw - Math.PI / 2, cam0, MODEL_DEFS[w.model].o, null, { lift, litA: lightAt(P.x, P.y).map(v => Math.max(.5, v)) });
-    if (P.flash > 0 && P.weapon !== 3) R.draw(mesh('w_flash'), wx + fxv * .6, wy + fyv * .6, P.yaw - Math.PI / 2, cam0, MODEL_DEFS.w_flash.o, null, { lift: lift + MODEL_DEFS[w.model].H * WEAPON_VOX - 1.2 });
+    R.draw(mesh(w.model), M4(wx, wy, lift, P.yaw - Math.PI / 2), WEAPON_VOX);
+    if (P.flash > 0 && P.weapon !== 3) R.draw(mesh('w_flash'), M4(wx + fxv * .6, wy + fyv * .6, lift + MODEL_DEFS[w.model].H * WEAPON_VOX - 1.2, P.yaw - Math.PI / 2), .3);
   }
-  R.end(1.1);                                                           // glowing voxels bloom
+  // the lights that matter this frame: flashes first, then the nearest lamps
+  const ls = flashes.map(f => { const k = f.I * (1 - f.t / f.life); return [f.x, f.y, f.z, f.R, f.col[0] * k, f.col[1] * k, f.col[2] * k, 0]; });
+  for (const s of shots.slice(0, 3)) ls.push([s.x, s.y, s.lift, 30, 1, .75, .35, 0]);
+  if (train.x < 620 && train.x > -60) ls.push([train.x + 96, 464, 4, 120, 2.2, 2, 1.5, .1]);                 // its headlamp sweeps the station
+  const near = [];
+  for (const l of lights) { const d = Math.hypot(l.x - P.x, l.y - P.y); if (d < l.R * 1.5 + 200) near.push([d, l]); }
+  near.sort((a, b) => a[0] - b[0]);
+  for (const [, l] of near) {
+    if (ls.length >= 16) break;
+    const k = l.I * 1.2 * (l.flick ? .86 + .14 * Math.sin(time * 9 + l.x) * Math.sin(time * 5.3 + l.y) + (Math.sin(time * 1.7 + l.x * 3) > .985 ? -.4 : 0) : 1);   // lanterns gutter
+    ls.push([l.x, l.y, l.z, l.R * 1.5, l.col[0] * k, l.col[1] * k, l.col[2] * k, canSee(P.x, P.y, l.x, l.y) ? l.air * .12 : 0]);
+  }
+  const bodies = [];
+  for (const e of enemies) if (!e.dead) bodies.push([Math.hypot(e.x - P.x, e.y - P.y), e.x, e.y, e.r * 1.05, (e.fly || 0) + MODEL_DEFS[e.type + '_i'].H * VOX]);
+  for (const d of decor) if (!d.gone && d.solid && d.r >= 2) bodies.push([Math.hypot(d.x - P.x, d.y - P.y), d.x, d.y, Math.min(d.r, 6), MODEL_DEFS[d.model].H * (MODEL_DEFS[d.model].o ? MODEL_DEFS[d.model].o.vox : 1)]);
+  bodies.sort((a, b) => a[0] - b[0]);
+  R.end({ lights: ls, bodies: bodies.slice(0, 10).map(b => b.slice(1)), fog: [.04, .035, .05, 80], sky: 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))), time, smoke: smokeBuf, smokeCount: ns });
   $('stats').textContent = `${n} draws, ${Math.round(R.stats.tris / 1000)}k triangles.`;
   // status bar
   const w = WEAPONS[P.weapon];
@@ -683,10 +776,12 @@ document.querySelectorAll('#touch button').forEach(b => {
   const set = on => e => { e.preventDefault(); b.classList.toggle('down', on); if (b.dataset.k === 'next') { if (on) { let i = P.weapon; do i = (i + 1) % 4; while (!P.has[i]); P.weapon = i; } } else keys[b.dataset.k] = on; if (on) start(); };
   b.addEventListener('pointerdown', set(true)); ['pointerup', 'pointercancel', 'pointerleave'].forEach(t => b.addEventListener(t, set(false))); b.addEventListener('contextmenu', e => e.preventDefault());
 });
+const warm = Object.keys(MODEL_DEFS).filter(n => /^(automate|scaphandre|colosse|lanterne|a_|w_)/.test(n));
 let last = performance.now(), frames = 0, since = last, spent = 0;
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000), t0 = performance.now(); last = now;
   if (state === 'play') update(dt);
+  if (warm.length) mesh(warm.pop());                                 // build the models a frame at a time, so none is first built in the middle of a fight
   render(now);
   frames++; spent += performance.now() - t0;
   if (now - since >= 500) { $('fps').textContent = `${Math.round(frames * 1000 / (now - since))} fps · ${(spent / frames).toFixed(1)} ms`; frames = 0; spent = 0; since = now; }
@@ -694,6 +789,6 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 window.AUTOMATES = { get P() { return P; }, get enemies() { return enemies; }, get items() { return items; }, get decor() { return decor; }, get state() { return state; }, set state(v) { state = v; showScreen(); }, get stats() { return stats; },
-  doors, tiles, tile, update, render, reset, fire, C, CS, canSee, panels, start };
+  doors, tiles, tile, update, render, reset, fire, C, CS, canSee, panels, start, train };
 }
 { const img = new Image(); img.onload = () => main(img); img.src = ART.png; }                // the art atlas has to be decoded before anything can be built

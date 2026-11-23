@@ -19,7 +19,7 @@ function buildMesh(d) {
     for (const [n, ...q] of FACES) {
       if (at(x + n[0], y + n[1], z + n[2]) != null) continue;
       for (const i of [0, 1, 2, 0, 2, 3]) // x,y centred on the model; z is the corner (0/1) and the layer travels separately so it can be exploded
-        (n[2] ? [v, top] : [v]).forEach(out => out.push(x + q[i][0] - W / 2, y + q[i][1] - L / 2, q[i][2], z, (c >> 16 & 255) / 255 + (c > 0xffffff ? 2 : 0), (c >> 8 & 255) / 255, (c & 255) / 255, n[0], n[1], n[2]));
+        (n[2] ? [v, top] : [v]).forEach(out => out.push(x + q[i][0] - W / 2, y + q[i][1] - L / 2, q[i][2], z, (c >> 16 & 255) / 255 + (c & 0x1000000 ? 2 : 0), (c >> 8 & 255) / 255 + (c & 0x2000000 ? 2 : 0), (c & 255) / 255, n[0], n[1], n[2]));
     }
   }
   return { ...d, data: new Float32Array(v), count: v.length / 10, top: new Float32Array(top), topCount: top.length / 10, voxels }; // `top` alone is enough to cast the shadow

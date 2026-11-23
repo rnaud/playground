@@ -47,8 +47,7 @@ def shrink(im, size):     # area-average down to voxel resolution, keeping a har
             px[x, y] = (min(255, r * 255 // a), min(255, g * 255 // a), min(255, b * 255 // a), 255) if a >= 128 else (0, 0, 0, 0)
     return small
 
-def components(im, expect):   # split a keyed sheet into its objects, left to right
-    k = 8
+def components(im, expect, k=8, grow=1):   # split a keyed sheet into its objects, left to right; a tighter grid for sheets whose objects nearly touch
     m = im.getchannel('A').resize((im.width // k, im.height // k), Image.BOX).point(lambda v: 255 if v > 40 else 0)
     w, h = m.size
     src = m.load()
@@ -56,8 +55,8 @@ def components(im, expect):   # split a keyed sheet into its objects, left to ri
     for y in range(h):
         for x in range(w):
             if src[x, y]:
-                for dy in range(-1, 2):
-                    for dx in range(-1, 2):
+                for dy in range(-grow, grow + 1):
+                    for dx in range(-grow, grow + 1):
                         if 0 <= x + dx < w and 0 <= y + dy < h: grown[y + dy][x + dx] = True
     seen = [[False] * w for _ in range(h)]
     boxes = []
@@ -166,13 +165,15 @@ SHEETS = [
     ('props-low', [('drum', 44), ('cask', 44), ('table', 34), ('crate', 36), ('exit', 80)]),
     ('props-pickups', [('baguette', 14), ('wine', 34), ('helmet', 20), ('bullets', 15), ('shells', 17), ('cells', 16), ('key_red', 16), ('key_blue', 16)]),
     ('props-metro', [('hanglamp', 30), ('bench', 20), ('bin', 18), ('signal', 44), ('lantern', 28)]),
+    ('props-rooms', [('chandelier', 44), ('arch', 76), ('rack', 60), ('workbench', 34)]),
+    ('train', [('train', 46)]),
 ]
 SHINE = {'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
-         'lamp': 'warm', 'table': 'warm', 'hanglamp': 'warm', 'lantern': 'warm yellow', 'signal': 'red'}
+         'lamp': 'warm', 'table': 'warm', 'chandelier': 'warm', 'train': 'warm yellow', 'hanglamp': 'warm', 'lantern': 'warm yellow', 'signal': 'red'}
 for sheet, objs in SHEETS:
     im = load(sheet)
     if not im: continue
-    for (name, hv), c in zip(objs, components(key(im), len(objs))):
+    for (name, hv), c in zip(objs, components(key(im), len(objs), *((4, 0) if sheet == 'props-rooms' else ()))):
         d = fit(c, height=hv)
         add(name, glow(d, SHINE[name]) if name in SHINE else d)
 for sheet, suffix, extra in [('enemies-aim', '_aim', ''), ('enemies-fire', '_fire', ' yellow warm')]:   # the same four machines with their guns levelled, and firing

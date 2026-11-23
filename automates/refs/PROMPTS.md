@@ -45,3 +45,10 @@ The order of the objects in each sheet matters: `build_art.py` splits a sheet in
 | `enemies-aim`, `enemies-fire` | 16:9 | The four machines "each AIMING ITS WEAPON STRAIGHT AT THE VIEWER", and the same "FIRING ... with a bright yellow-white star-shaped muzzle flash at every gun muzzle". |
 
 Glowing pixels (lamp glass, furnace grilles, portholes, muzzle flashes) are picked out by colour in `build_art.py` and stored with alpha 200; the game leaves them out of the baked lighting and blooms them.
+
+### Added for the new renderer's rooms and set pieces
+
+| Files | Aspect | What it is |
+| --- | --- | --- |
+| `train` | 16:9 | "One single 1930s Paris Metro train carriage seen exactly from the side, a flat orthographic side elevation", on magenta. Three of them run through the station. |
+| `props-rooms` | 16:9 | Four objects on magenta: hanging chandelier, stone arch rib for the catacomb tunnels, rack of three casks, workbench. |
