@@ -449,17 +449,17 @@ function reset() {
 }
 
 // ---------- sound: tiny synthesised effects ----------
-let audio = null, muted = false;
-function sfx(kind) {
-  if (!audio || muted) return;
-  const t = audio.currentTime, g = audio.createGain(); g.connect(audio.destination);
-  const tone = (type, f0, f1, dur, vol) => { const o = audio.createOscillator(); o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur); o.connect(g); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur); o.start(t); o.stop(t + dur); };
-  const noise = (dur, vol, lp) => { const n = audio.createBufferSource(), b = audio.createBuffer(1, audio.sampleRate * dur, audio.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length); n.buffer = b; const f = audio.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = lp; n.connect(f); f.connect(g); g.gain.setValueAtTime(vol, t); n.start(t); };
-  ({ pistol: () => { noise(.12, .5, 2400); tone('square', 320, 60, .1, .2); }, shotgun: () => { noise(.3, .8, 1400); tone('square', 160, 40, .2, .3); }, smg: () => { noise(.07, .4, 3000); tone('square', 380, 90, .06, .15); },
-    tesla: () => tone('sawtooth', 900, 200, .12, .2), hit: () => tone('square', 700, 200, .05, .12), die: () => { noise(.35, .5, 900); tone('sawtooth', 300, 40, .35, .2); }, boom: () => { noise(.6, 1, 500); tone('sine', 120, 30, .5, .5); },
-    pickup: () => tone('triangle', 520, 1040, .12, .2), key: () => { tone('triangle', 660, 1320, .25, .25); }, door: () => tone('sawtooth', 70, 110, .35, .12), train: () => { noise(2.6, .7, 320); tone('sawtooth', 55, 48, 2.4, .25); }, hurt: () => tone('sawtooth', 220, 90, .2, .3), enemy: () => tone('square', 180, 120, .12, .1), wake: () => tone('square', 240, 480, .15, .08), click: () => tone('square', 900, 800, .03, .08),
-  }[kind] || (() => {}))();
+let audio = null, snd = null, muted = false;
+// Play an effect. With a place (anything with x and y), it is panned to that side, fades with distance and is muffled behind a wall.
+function sfx(kind, at) {
+  if (!snd || muted) return;
+  if (!at) return snd.play(kind);
+  const dx = at.x - P.x, dy = at.y - P.y, d = Math.hypot(dx, dy);
+  if (d > 420) return;
+  snd.play(kind, { vol: 1 / (1 + (d / 70) ** 2), pan: Math.sin(Math.atan2(dy, dx) - P.yaw) * Math.min(1, d / 30) * .85, muffle: Math.min(.85, d / 500 + (canSee(P.x, P.y, at.x, at.y) ? 0 : .5)) });
 }
+const ROOM_OF = { m: 'metro', r: 'metro', c: 'catacombs', b: 'cellar', w: 'chateau', k: 'chateau', g: 'courtyard', o: 'courtyard', i: 'workshop' };
+const STEP_ON = { m: 'tile', r: 'stone', c: 'earth', b: 'stone', w: 'wood', k: 'carpet', g: 'grass', o: 'stone', i: 'metal' };
 
 // ---------- helpers ----------
 const wrap = a => { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; };
@@ -503,7 +503,7 @@ function hurtPlayer(d) {
   if (P.hp <= 0) { P.hp = 0; P.dead = true; state = 'dead'; showScreen(); }
 }
 function explode(x, y) {
-  sfx('boom'); burst(x, y, 6, 14, 'a_smoke');
+  sfx('boom', { x, y }); burst(x, y, 6, 14, 'a_smoke');
   for (const p of panels) if (p.far && Math.hypot(p.x - x, p.y - y) < 36) for (let i = 0; i < 3; i++) chip(p, rand(10, 118), rand(4, 90), rand(5, 10));   // the blast tears at the walls around it flashAt(x, y, 8, 170, 4.5, AMBER, .5); sparks(x, y, 5, 34); smoke(x, y, 3, 9); litter('a_scorch', x, y, .05);
   P.shake = Math.max(P.shake, 2.2 * Math.max(0, 1 - Math.hypot(P.x - x, P.y - y) / 160));
   for (const e of enemies) if (!e.dead) { const d = Math.hypot(e.x - x, e.y - y); if (d < 46) hurtEnemy(e, 90 * (1 - d / 50), x, y); }
@@ -514,8 +514,8 @@ function hurtEnemy(e, dmg, fx0, fy0) {
   if (e.dead) return;
   const back = Math.atan2(fy0 - e.y, fx0 - e.x), hx = e.x + Math.cos(back) * e.r * .7, hy = e.y + Math.sin(back) * e.r * .7, hz = rand(5, 13) + (e.fly ? e.fly - 4 : 0);   // where the shot struck, on the side facing the gun
   e.hp -= dmg; e.flash = .1; e.awake = true; sparks(hx, hy, hz, 5 + (dmg > 20 ? 5 : 0), back, 1.8); oil(hx, hy, hz, 2, back); burst(hx, hy, hz, 1, 'a_bit');
-  if (e.hp > 0) { sfx('hit'); return; }
-  e.dead = true; stats.kills++; sfx('die'); wreck(e, fx0, fy0); P.shake = Math.max(P.shake, e.boss ? 2 : .35);
+  if (e.hp > 0) { sfx('hit', e); return; }
+  e.dead = true; stats.kills++; sfx('die', e); wreck(e, fx0, fy0); P.shake = Math.max(P.shake, e.boss ? 2 : .35);
   const a = Math.atan2(e.y - fy0, e.x - fx0); e.fall = { dx: Math.cos(a), dy: Math.sin(a), a: 0, t: 0 };
   if (e.type === 'automate' && Math.random() < .45) items.push({ kind: 'bullets', x: e.x, y: e.y, small: true });
   if (e.boss) { say('Le Colosse is scrap. Find the lever!'); for (let i = 0; i < 4; i++) setTimeout(() => explode(e.x + (Math.random() - .5) * 20, e.y + (Math.random() - .5) * 20), i * 220); }
@@ -572,19 +572,22 @@ function update(dt) {
   const wx = (Math.cos(P.yaw) * f - Math.sin(P.yaw) * s) / l * 125, wy = (Math.sin(P.yaw) * f + Math.cos(P.yaw) * s) / l * 125;
   P.vx += (wx - P.vx) * Math.min(1, 10 * dt); P.vy += (wy - P.vy) * Math.min(1, 10 * dt);
   moveBody(P, P.vx * dt, P.vy * dt, 4.5, enemies);
-  P.bob += Math.hypot(P.vx, P.vy) * dt * 0.09; P.cool -= dt; P.kick = Math.max(0, P.kick - dt * 5); P.shake = Math.max(0, P.shake - dt * 4);
+  const here = tile(Math.floor(P.x / CS), Math.floor(P.y / CS)), was = P.bob;
+  P.bob += Math.hypot(P.vx, P.vy) * dt * 0.09;
+  if (snd) { snd.room(ROOM_OF[here === 'D' ? doorAt(Math.floor(P.x / CS), Math.floor(P.y / CS)).floor : here]); if (!muted) { snd.tick(dt); if (Math.floor(P.bob / Math.PI) !== Math.floor(was / Math.PI) && STEP_ON[here]) snd.step(STEP_ON[here], Math.floor(P.bob / Math.PI) & 1 ? .18 : -.18); } }   // a footfall each time the stride lands
+ P.cool -= dt; P.kick = Math.max(0, P.kick - dt * 5); P.shake = Math.max(0, P.shake - dt * 4);
   for (let i = flashes.length - 1; i >= 0; i--) if ((flashes[i].t += dt) > flashes[i].life) flashes.splice(i, 1);
   train.next -= dt;                                                                                       // the train: out of one tunnel, through the station, into the other
   if (train.next <= 0) { train.x = -220; train.next = rand(38, 60); train.sounded = false; }
-  if (train.x < 620) { train.x += 170 * dt; const near = Math.hypot(P.x - train.x - 50, P.y - 464); if (near < 150) P.shake = Math.max(P.shake, .5 * (1 - near / 150)); if (!train.sounded && train.x > -60) { train.sounded = true; sfx('train'); } }
-  for (const s of steamers) if ((s.t -= dt) < 0) { s.t = rand(3, 8); if (Math.hypot(s.x - P.x, s.y - P.y) < 150) for (let i = 0; i < 6; i++) spawn(Math.random() < .5 ? 'a_puff1' : 'a_puff2', s.x, s.y, rand(11, 14), { vx: rand(-4, 4), vy: rand(-4, 4), vz: rand(6, 16), life: rand(.8, 1.6), steam: 1 }); } P.flash -= dt; P.pain = Math.max(0, P.pain - dt * 0.9); P.grin -= dt;
+  if (train.x < 620) { train.x += 170 * dt; const near = Math.hypot(P.x - train.x - 50, P.y - 464); if (near < 150) P.shake = Math.max(P.shake, .5 * (1 - near / 150)); if (!train.sounded && train.x > -60) { train.sounded = true; sfx('train', { x: Math.max(40, Math.min(220, P.x)), y: 464 }); } }
+  for (const s of steamers) if ((s.t -= dt) < 0) { s.t = rand(3, 8); if (Math.hypot(s.x - P.x, s.y - P.y) < 150) sfx('steam', s); if (Math.hypot(s.x - P.x, s.y - P.y) < 150) for (let i = 0; i < 6; i++) spawn(Math.random() < .5 ? 'a_puff1' : 'a_puff2', s.x, s.y, rand(11, 14), { vx: rand(-4, 4), vy: rand(-4, 4), vz: rand(6, 16), life: rand(.8, 1.6), steam: 1 }); } P.flash -= dt; P.pain = Math.max(0, P.pain - dt * 0.9); P.grin -= dt;
   if (k[' '] || k.control || k.fire) fire();
   // doors slide open for the player (with the right key) and for enemies that are hunting
   for (const d of doors) {
     const near = Math.hypot(P.x - d.x, P.y - d.y) < 22;
     if (near && !d.unlocked) { if (P.keys[d.key]) { d.unlocked = true; say(`The ${d.key} door unlocks.`); } else if (!d.told || stats.time - d.told > 3) { d.told = stats.time; say(`You need the ${d.key} key.`); } }
     const want = d.unlocked && (near || enemies.some(e => e.awake && !e.dead && Math.hypot(e.x - d.x, e.y - d.y) < 20));
-    if (want) { if (d.open === 0) sfx('door'); d.hold = 2.5; }
+    if (want) { if (d.open === 0) sfx('door', d); d.hold = 2.5; }
     d.hold -= dt; const target = d.hold > 0 ? 1 : 0;
     if (target === 0 && d.open > 0 && [P, ...enemies].some(b => !b.dead && Math.hypot(b.x - d.x, b.y - d.y) < 13)) d.hold = .5;   // never close on someone
     else d.open = Math.max(0, Math.min(1, d.open + (target ? 1 : -1) * dt * 2.2));
@@ -595,11 +598,11 @@ function update(dt) {
     e.flash -= dt; e.atk -= dt; e.t += dt;
     const dx = P.x - e.x, dy = P.y - e.y, dist = Math.hypot(dx, dy);
     e.seeT -= dt; if (e.seeT <= 0) { e.seeT = .18; e.see = dist < 320 && canSee(e.x, e.y, P.x, P.y); }
-    if (!e.awake) { if ((e.see && dist < 260) || dist < 40) { e.awake = true; sfx('wake'); } else continue; }
+    if (!e.awake) { if ((e.see && dist < 260) || dist < 40) { e.awake = true; sfx('wake', e); } else continue; }
     e.yaw = Math.atan2(dy, dx);
     e.cool -= dt;
     if (e.see && dist < e.range && e.cool <= 0 && !P.dead) {         // fire a volley of slow, dodgeable shots
-      e.cool = e.rate * (.8 + Math.random() * .5); e.atk = .22; sfx('enemy'); flashAt(e.x + Math.cos(e.yaw) * (e.r + 3), e.y + Math.sin(e.yaw) * (e.r + 3), 8 + (e.fly || 0), 80, 1.8, WARM, .12);
+      e.cool = e.rate * (.8 + Math.random() * .5); e.atk = .22; sfx('enemy', e); flashAt(e.x + Math.cos(e.yaw) * (e.r + 3), e.y + Math.sin(e.yaw) * (e.r + 3), 8 + (e.fly || 0), 80, 1.8, WARM, .12);
       for (let i = 0; i < e.shots; i++) { const a = e.yaw + (i - (e.shots - 1) / 2) * .16 + (Math.random() - .5) * .08; shots.push({ model: e.shot, x: e.x + Math.cos(a) * (e.r + 3), y: e.y + Math.sin(a) * (e.r + 3), vx: Math.cos(a) * 115, vy: Math.sin(a) * 115, dmg: e.dmg, lift: 7 + (e.fly || 0), t: 0 }); }
       if (e.boss && Math.random() < .35) for (let i = 0; i < 12; i++) { const a = i / 12 * 6.283; shots.push({ model: 'a_spark', x: e.x + Math.cos(a) * 12, y: e.y + Math.sin(a) * 12, vx: Math.cos(a) * 90, vy: Math.sin(a) * 90, dmg: 8, lift: 7, t: 0 }); }
     }
@@ -753,7 +756,7 @@ function showScreen() {
 
 // ---------- input + loop ----------
 state = 'title'; reset(); showScreen();
-const start = () => { if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { audio = null; } } if (state !== 'play') { if (state !== 'pause') reset(); state = 'play'; showScreen(); } };
+const start = () => { if (!audio) { try { audio = new (window.AudioContext || window.webkitAudioContext)(); snd = Sound(audio); } catch (e) { audio = snd = null; } } if (state !== 'play') { if (state !== 'pause') reset(); state = 'play'; showScreen(); } };
 const lock = () => { if (scene.requestPointerLock && matchMedia('(pointer:fine)').matches) { try { const p = scene.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* not available */ } } };
 $('screen').addEventListener('click', () => { start(); lock(); });
 scene.addEventListener('mousedown', e => { if (state !== 'play') return; if (document.pointerLockElement !== scene) lock(); if (e.button === 0) keys.fire = true; });
@@ -763,8 +766,8 @@ document.addEventListener('pointerlockchange', () => { if (document.pointerLockE
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   if (k === 'r' && !e.repeat) { reset(); state = 'play'; showScreen(); return; }
-  if (k === 'm' && !e.repeat) { muted = !muted; return; }
-  if (k >= '1' && k <= '4' && P.has[+k - 1]) P.weapon = +k - 1;
+  if (k === 'm' && !e.repeat) { muted = !muted; if (snd) snd.mute(muted); return; }
+  if (k >= '1' && k <= '4' && P.has[+k - 1] && P.weapon !== +k - 1) { P.weapon = +k - 1; sfx('swap'); }
   keys[k] = true; if (k === ' ' || k.startsWith('arrow')) e.preventDefault();
 });
 addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
