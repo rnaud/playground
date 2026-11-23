@@ -33,6 +33,7 @@ for (const [x, y] of [[28, 6], [28, 7], [32, 6], [31, 6], [27, 12], [28, 12], [3
 carve(26, 16, 33, 24, 'i', 'I'); for (const [x, y] of [[28, 18], [31, 18], [28, 22], [31, 22]]) tiles[y][x] = 'G';
 carve(30, 25, 30, 25, 'i', 'I');
 door(8, 25); door(4, 18); door(12, 18, 'blue'); door(20, 13); door(17, 5); door(23, 5); door(25, 9); door(30, 15, 'red');
+tiles[19][6] = tiles[18][10] = 'M'; tiles[2][5] = 'K';                      // two tiled piers in the ticket hall and a pier of skulls in the ossuary: something to fight round
 // three hidden rooms, each behind a stretch of wall that gives way to a kick: off the platform, off the catacombs, and off the cellar
 carve(16, 26, 18, 27, 'm', 'M'); carve(13, 7, 13, 9, 'c', 'C'); carve(14, 21, 14, 22, 'b', 'B'); door(15, 27, 'secret'); door(12, 8, 'secret'); door(15, 21, 'secret');
 // wall decoration, placed by hand: posters, station signs and sconces, wine racks, paintings, windows, pipework and machinery
@@ -473,6 +474,7 @@ lathe('a_wine', sprite('wine')); lathe('a_lamp', sprite('lamp')); lathe('a_drum'
 box('a_cask', sprite('cask'), 44); lathe('a_table', sprite('table')); box('a_exit', sprite('exit'), 28);
 lathe('a_chandelier', sprite('chandelier')); box('a_arch', sprite('arch', WV + 6, LOWC * VPU), 12); box('a_rack', sprite('rack'), 40); box('a_workbench', sprite('workbench'), 16); box('a_train', sprite('train'), 36);
 for (const [n, depth] of [['kiosk', 26], ['suitcases', 26], ['trolley', 30], ['barrow', 24], ['bottles', 30], ['armchair', 38], ['armour', 14], ['clock', 20], ['anvil', 16], ['repair', 16]]) box('a_' + n, sprite(n), depth);   // the second set of furniture: flat-sided things are extruded,
+box('a_turnstile', sprite('turnstile'), 14); box('a_sarcophagus', sprite('sarcophagus'), 30); box('a_well', sprite('well'), 40); for (const n of ['booth', 'monument']) lathe('a_' + n, sprite(n));
 for (const n of ['scale', 'morris', 'bones', 'candles', 'sacks', 'globe', 'palm', 'coil', 'urn', 'statue']) lathe('a_' + n, sprite(n));                                                                                    // round ones are turned
 for (const n of ['paper', 'manhole', 'drain', 'boneheap', 'spill', 'straw', 'rug', 'rug2', 'leaves', 'oil', 'plans', 'cable']) { const s = sprite('flat_' + n); model('f_' + n, s.w, s.h, 1, (x, y) => { const k = s.c[y * s.w + x]; return k < 0 ? null : k; }); }   // things lying on the floor: one voxel thick, drawn from above
 for (const [n, depth] of [['hsign', 4], ['hclock', 10], ['hams', 8], ['hoist', 10], ['pipes', 12], ['parts', 8], ['banner', 2]]) box('a_' + n, sprite(n), depth);   // and things that hang from the ceiling
@@ -494,6 +496,7 @@ model('a_pool', 28, 28, 1, blot(14, 0x120e0b, 0x3a3128)); model('a_winepool', 30
 model('a_shield', 26, 3, 46, (x, y, z) => z > 31 && z < 35 && x > 6 && x < 19 ? (y === 1 ? GLOW | 0x7fe8ff : null) : x < 2 || x > 23 || z < 2 || z > 43 ? SHINY | 0xb08a3a : x % 8 === 4 && z % 8 === 4 ? SHINY | 0xc9a23a : SHINY | (noise3(x >> 2, z >> 2, 8) > .6 ? 0x26345e : 0x1f2b50)); model('a_scorch', 44, 44, 1, blot(22, 0x0c0a09, 0x1e1a17)); model('a_hole', 2, 2, 2, () => 0x0e0c0b, .3);
 for (const n of ['a_shot', 'a_spark', 'a_shell', 'a_bolt']) { const d = MODEL_DEFS[n], f = d.fn; d.fn = (x, y, z) => { const c = f(x, y, z); return c == null ? null : c | GLOW; }; }   // shots make their own light
 // weapons are relief cards cut from the first-person sheet: always seen from behind, exactly as drawn
+for (const n of ['a_baguette', 'a_wine', 'a_helmet', 'a_bullets', 'a_shells', 'a_cells', 'a_key_red', 'a_key_blue']) MODEL_DEFS[n].o = voxOpt(VOX * .62);   // things to pick up are life-size beside you, not waist-high
 const WEAPON_VOX = 0.085, GUN_VOX = 0.125, GUN_UP = 0, HAND = [0, -.6, 0, -.5, -.25];   // HAND: where the hand sits on the gun (along it, back, across, down) and how it is tilted
 // in the hand the weapons are true 3D models carved from their side views; the cards above are what lies on the floor to be picked up
 for (const n of ['pistol', 'shotgun', 'smg', 'tesla', 'hand']) { const v = voxels(n === 'hand' ? n : 'gun_' + n); model('v_' + n, v.W, v.L, v.H, (x, y, z) => { const k = v.c[x + v.W * (y + v.L * z)]; return k < 0 ? null : k; }, GUN_VOX); }
@@ -512,7 +515,7 @@ for (let cx = 2; cx <= 14; cx += 2) FIX.push({ model: 'a_hang', x: cx * DS, y: 2
 for (const [cx, cy] of [[7, 4], [8, 7], [2, 8], [8, 14], [5, 12], [11, 9], [4, 2], [10, 4], [13, 8]]) FIX.push({ model: 'a_lantern', ...C(cx, cy), hang: LOWC, z: LOWC - 5, R: 76, I: .85, col: AMBER, flick: 1 });
 for (const [cx, cy] of [[18, 18], [22, 18], [20, 15], [20, 21], [14, 18], [2, 18], [14, 22], [17, 27]]) { const hang = inCellar(cx * K, cy * K) ? 22 : WH - 6; FIX.push({ model: 'a_lantern', ...C(cx, cy), hang, z: hang - 5, R: 84, I: .9, col: AMBER, flick: 1 }); }
 for (const [cx, cy, ox, oy] of [[2, 12, -4, 4], [11, 12, 4, 4], [5, 4, -4, 4], [8, 7, 4, -4], [8, 13, -4, 0], [2, 5, 4, -4], [16, 20, -4, 0], [6, 9, 4, 4]]) FIX.push({ model: 'a_candles', ...C(cx, cy, ox, oy), z: 8, R: 44, I: .55, col: AMBER, flick: 1 });   // candles on blocks of stone
-for (const [cx, cy, ox, oy] of [[26, 18, -4, 0], [33, 18, 4, 0], [26, 22, -4, 0], [33, 22, 4, 0]]) FIX.push({ model: 'a_coil', ...C(cx, cy, ox, oy), z: 20, R: 60, I: .6, col: COLD });   // the Baron's coils
+for (const [cx, cy, ox, oy] of [[26, 18, -4, 0], [33, 18, 4, 0], [26, 21, -4, 0], [33, 21, 4, 0]]) FIX.push({ model: 'a_coil', ...C(cx, cy, ox, oy), z: 20, R: 60, I: .6, col: COLD });   // the Baron's coils
 for (const [cx, cy, hang] of [[4, 2, LOWC], [6, 8, LOWC], [17, 20, 21], [23, 16, 21], [2, 18, WH - 4]]) FIX.push({ model: 'a_ring', ...C(cx, cy, 2, 2), hang, z: hang - 9, R: 70, I: .6, col: AMBER, flick: 1 });   // rings of candles
 for (const [cx, cy] of [[20, 9], [18, 3], [22, 3]]) FIX.push({ model: 'a_chandelier', ...C(cx, cy), hang: WH, z: WH - 8, R: 120, I: .55, col: WARM });
 for (const [cx, cy, ox] of [[26, 9, -4], [33, 9, 4], [28, 5, 0], [32, 13, 0]]) FIX.push({ model: 'a_lamp', ...C(cx, cy, ox, -5), z: 16, R: 88, I: .85, col: WARM });
@@ -663,11 +666,11 @@ function reset() {
   // Metro
   E('automate', 10, 26); E('automate', 13, 27); I('bullets', 6, 27); I('baguette', 12, 27); D('a_crate', 14, 26, 2, -2);
   for (const cx of [3, 5, 11, 13]) for (const ox of [-5, 5]) D('a_bench', cx, 26, ox, -5, { r: 5 }); D('a_bin', 7, 26, 4, -5, { r: 2 }); D('a_bin', 9, 26, -4, -5, { r: 2 }); D('a_signal', 1, 27, -4, 6, { r: 1.5 }); D('a_signal', 14, 27, 4, 6, { r: 1.5 });
-  E('automate', 6, 18); E('automate', 10, 19); I('baguette', 11, 17); D('a_bench', 8, 20, 12, 5, { r: 5 });
+  E('automate', 6, 18); E('automate', 10, 19); I('baguette', 11, 17); D('a_bench', 11, 20, 4, 4, { r: 5 });
   I('shotgun', 2, 17); I('shells', 1, 20); I('shells', 3, 20); E('automate', 2, 19); D('a_crate', 1, 16); D('a_crate', 3, 16, 0, 0, { rot: .4 });
   // what people left behind: the station's furniture, the quarrymen's and the cellarman's clutter, the Baron's house and his workshop
   const Q = Math.PI / 2;
-  D('a_kiosk', 2, 26, 0, -4, { r: 6 }); D('a_scale', 6, 26, 4, -4, { r: 2.5 }); D('a_suitcases', 10, 26, 0, -4, { r: 4 }); D('a_morris', 7, 27, -4, -2, { r: 4.5 }); D('a_trolley', 13, 26, -4, -4, { r: 5 }); D('a_suitcases', 1, 26, -4, 4, { r: 4, rot: .5 });
+  D('a_kiosk', 2, 26, 0, -4, { r: 6 }); D('a_scale', 6, 26, 4, -4, { r: 2.5 }); D('a_suitcases', 10, 26, 0, -4, { r: 4 }); D('a_morris', 7, 27, -4, -2, { r: 4.5 }); D('a_trolley', 12, 26, 0, -4, { r: 5 }); D('a_suitcases', 1, 26, -4, 4, { r: 4, rot: .5 });
   D('a_trolley', 6, 20, 0, 4, { r: 5 }); D('a_suitcases', 10, 17, 4, -4, { r: 4 }); D('a_scale', 11, 19, 4, 0, { r: 2.5, rot: Q }); D('a_sacks', 5, 17, -4, -4, { r: 4 }); D('a_kiosk', 8, 17, 4, -4, { r: 6 });
   D('a_anvil', 1, 18, -4, 0, { r: 3, rot: Q }); D('a_sacks', 3, 19, 4, 4, { r: 4 }); D('a_barrow', 2, 20, 0, 4, { r: 4 });
   for (const [x, y, ox, oy] of [[2, 6, -4, 0], [2, 10, 4, 0], [4, 12, 0, 4], [9, 12, 0, -4], [11, 7, 4, 0], [11, 11, -4, 0], [8, 15, 4, 0], [3, 3, -4, 4], [6, 2, 4, -4], [6, 9, -4, 4], [7, 8, 4, -4], [10, 5, 4, 4], [5, 1, 0, -4], [2, 2, -4, -4]]) D('a_bones', x, y, ox, oy, { r: 3, rot: x * 1.7 + y, solid: false });
@@ -681,7 +684,11 @@ function reset() {
   for (const [x, y, ox, oy] of [[27, 10, 0, -4], [29, 8, 0, 4], [32, 10, 0, -4], [31, 13, -4, 0], [29, 13, 4, 0], [27, 8, 0, 4]]) D('a_urn', x, y, ox, oy, { r: 3 });
   for (const [x, y, ox, oy] of [[26, 6, -4, 0], [33, 8, 4, 0], [29, 12, -4, 0], [33, 13, 4, 4], [30, 5, 0, -4]]) D('a_statue', x, y, ox, oy, { r: 3.5 });
   D('a_repair', 28, 16, 0, -4, { r: 4 }); D('a_repair', 32, 16, 0, -4, { r: 4 }); D('a_repair', 29, 24, 4, 4, { r: 4 }); D('a_anvil', 27, 20, -4, 0, { r: 3, rot: Q }); D('a_anvil', 32, 21, 4, 0, { r: 3 }); D('a_sacks', 26, 16, -4, -4, { r: 4 }); D('a_barrow', 33, 24, 4, 4, { r: 4 });
-  for (const [x, y, ox, oy] of [[6, 17, 2, 2], [10, 20, -2, 2], [4, 2, 2, 2], [6, 9, 2, -2], [11, 9, 0, 2], [13, 27, 2, 2], [17, 8, 2, 2], [23, 8, -2, 2], [27, 6, 2, 2], [32, 12, -2, -2], [28, 9, 2, 2]]) D('a_drum', x, y, ox, oy, { drum: true, hp: 12 });   // more of the Baron's fuel, left where it will do the most good
+  for (const [x, y, ox, oy] of [[6, 17, 2, 2], [10, 20, -2, 2], [4, 2, -4, 4], [6, 9, 2, -2], [11, 9, 0, 2], [13, 27, -4, 4], [17, 8, 4, 4], [23, 8, -4, 4], [27, 6, 2, 2], [33, 12, 0, 0], [28, 9, 2, 2]]) D('a_drum', x, y, ox, oy, { drum: true, hp: 12 });   // more of the Baron's fuel, left where it will do the most good
+  D('a_booth', 8, 19, 0, 2, { r: 8 }); for (const [cx, ox] of [[7, -3], [7, 3], [9, -3], [9, 3]]) D('a_turnstile', cx, 20, ox, 3, { r: 3.5 });   // the ticket hall: a booth in the middle, and the barrier you came through
+  for (const [cx, cy, oy] of [[6, 18, 4], [6, 20, -4], [10, 17, 4], [10, 19, -4]]) D('a_bench', cx, cy, 0, oy, { r: 5 });   // benches against the piers
+  D('a_sarcophagus', 2, 3, 2, 0, { r: 7 }); D('a_sarcophagus', 7, 3, 0, 2, { r: 7, rot: Q }); D('a_sarcophagus', 4, 4, 0, 1, { r: 7 }); D('a_monument', 4, 1, 0, 0, { r: 5 }); D('a_monument', 7, 2, 2, -2, { r: 5 });
+  D('a_well', 7, 9, -4, -4, { r: 7 }); D('a_sarcophagus', 5, 8, -2, 0, { r: 7, rot: Q }); D('a_sarcophagus', 8, 9, 2, 0, { r: 7, rot: Q }); D('a_monument', 6, 7, 2, 2, { r: 5 }); D('a_monument', 6, 10, -2, 2, { r: 5 });
   // underfoot and overhead
   { let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     const F = (n, cx, cy, ox = 0, oy = 0, rot) => decor.push({ model: 'f_' + n, ...C(cx, cy, ox, oy), r: 0, solid: false, rot: rot == null ? rnd() * 6.28 : rot, lift: 0, flat: true });
@@ -982,11 +989,12 @@ function fire(alt) {
   }
   if (mode && mode.chain && struck) chain(struck, mode.chain, 36);
 }
+const HEALTH = [.45, 1, .5], ARMOUR = [.5, .75, 1];
 const PICK = {
-  crust: { model: 'a_baguette', want: () => P.hp < 100, get: () => P.hp < 100 && (P.hp = Math.min(100, P.hp + 12), 'A heel of bread. +12 santé') },
-  baguette: { model: 'a_baguette', want: () => P.hp < 100, get: () => P.hp < 100 && (P.hp = Math.min(100, P.hp + 25), 'A baguette. +25 santé') },
-  wine: { model: 'a_wine', want: () => P.hp < 200, get: () => P.hp < 200 && (P.hp = Math.min(200, P.hp + 40), 'A bottle of Bordeaux. +40 santé') },
-  helmet: { model: 'a_helmet', want: () => P.armour < 100, get: () => P.armour < 100 && (P.armour = Math.min(100, P.armour + 50), 'An Adrian helmet. +50 armure') },
+  crust: { glow: HEALTH, model: 'a_baguette', want: () => P.hp < 100, get: () => P.hp < 100 && (P.hp = Math.min(100, P.hp + 12), 'A heel of bread. +12 santé') },
+  baguette: { glow: HEALTH, model: 'a_baguette', want: () => P.hp < 100, get: () => P.hp < 100 && (P.hp = Math.min(100, P.hp + 25), 'A baguette. +25 santé') },
+  wine: { glow: HEALTH, model: 'a_wine', want: () => P.hp < 200, get: () => P.hp < 200 && (P.hp = Math.min(200, P.hp + 40), 'A bottle of Bordeaux. +40 santé') },
+  helmet: { glow: ARMOUR, model: 'a_helmet', want: () => P.armour < 100, get: () => P.armour < 100 && (P.armour = Math.min(100, P.armour + 50), 'An Adrian helmet. +50 armure') },
   bullets: { model: 'a_bullets', get: it => (P.ammo.bullets += it.small ? 8 : 24, 'Cartridges') },
   shells: { model: 'a_shells', get: it => (P.ammo.shells += it.small ? 4 : 8, 'Shotgun shells') },
   cells: { model: 'a_cells', get: () => (P.ammo.cells += 30, 'Tesla cells') },
@@ -994,8 +1002,8 @@ const PICK = {
   shotgun: { model: 'w_shotgun', get: () => (P.has[1] = true, P.weapon = 1, P.reload = 0, P.ammo.shells += 8, P.mag[1] = MAG[1], 'Fusil de chasse: the gamekeeper’s shotgun!') },
   smg: { model: 'w_smg', get: () => (P.has[2] = true, P.weapon = 2, P.reload = 0, P.ammo.bullets += 40, P.mag[2] = MAG[2], 'Mitraillette: a submachine gun!') },
   tesla: { model: 'w_tesla', get: () => (P.has[3] = true, P.weapon = 3, P.reload = 0, P.ammo.cells += 40, P.mag[3] = MAG[3], 'Arc Tesla: the Baron’s own invention!') },
-  key_blue: { model: 'a_key_blue', get: () => (P.keys.blue = true, sfx('key'), 'The blue key') },
-  key_red: { model: 'a_key_red', get: () => (P.keys.red = true, sfx('key'), 'The red key') },
+  key_blue: { glow: [.4, .6, 1], model: 'a_key_blue', get: () => (P.keys.blue = true, sfx('key'), 'The blue key') },
+  key_red: { glow: [1, .3, .3], model: 'a_key_red', get: () => (P.keys.red = true, sfx('key'), 'The red key') },
 };
 
 // ---------- encounters: rooms that shut behind you, and machines that arrive while you are in them ----------
@@ -1277,7 +1285,8 @@ function render(now) {
   for (const h of hedges) if (vis(h.x, h.y, 14)) { R.draw(mesh('hedge'), h.M, VOX); n++; }
   for (const d of doors) { const name = d.key === 'secret' ? 'a_door_secret_' + (d.floor === 'k' ? 'W' : d.floor.toUpperCase()) : d.key ? 'a_door_' + d.key : 'a_door'; for (const sg of [-1, 1]) { const o = sg * (8 + d.open * 15); draw(name, d.x + (d.vertical ? o : 0), d.y + (d.vertical ? 0 : o), d.vertical ? 0 : Math.PI / 2, d.z); } }   // the two leaves slide apart into the walls
   for (const d of decor) if (!d.gone) { if (d.swing && vis(d.x, d.y, 8)) { R.draw(mesh(d.model), M4(d.x, d.y, d.lift, d.rot, Math.sin(time * 1.4 + d.x * .3) * .09, d.swing), VOX); n++; } else draw(d.model, d.x, d.y, d.rot, (d.lift || 0) + (d.z || 0)); }
-  for (const it of items) draw(PICK[it.kind].model, it.x, it.y, now * 0.002, (it.z || 0) + 3 + Math.sin(now * 0.004 + it.x) * 1.2);
+  for (const it of items) { const k = PICK[it.kind], bob = Math.sin(now * 0.004 + it.x) * 1.2, z = (it.z || 0) + 4 + bob; draw(k.model, it.x, it.y, now * 0.002, z);
+    const c = k.glow || [1, .85, .4]; for (let i = 0; i < 4; i++) { const a = now * 0.003 + i * 1.571 + it.x; cube([.5, c[0], c[1], c[2], 1], it.x + Math.cos(a) * 3.4, it.y + Math.sin(a) * 3.4, (it.z || 0) + 1.6 + Math.sin(a * 2) * .8); } }   // four motes circle each thing worth picking up: green for health, blue for armour, gold for ammunition
   for (const e of enemies) if ((!e.dead || e.dying) && vis(e.x, e.y, 14)) {   // a destroyed machine is only wreckage now, unless it is still falling over
     { const t = KIND[e.type].tint || [1, 1, 1]; R.tint(t[0], t[1], t[2], e.dead ? 0 : .06); }
     const rot = e.yaw - Math.PI / 2, fl = e.flash > 0 ? 0.8 : 0, lift = e.z + e.hop + (e.fly ? e.fly + Math.sin(e.t * 3) * 1.5 : 0), rig = RIG[e.type];

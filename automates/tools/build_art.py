@@ -184,11 +184,12 @@ SHEETS = [
     ('props-under', [('bones', 20), ('candles', 24), ('barrow', 26), ('bottles', 22), ('sacks', 26)]),
     ('props-chateau', [('armchair', 46), ('globe', 52), ('armour', 84), ('clock', 92), ('palm', 72)]),
     ('props-workshop', [('coil', 88), ('anvil', 34), ('repair', 84), ('urn', 60), ('statue', 100)]),
+    ('props-centre', [('turnstile', 46), ('booth', 104), ('sarcophagus', 34), ('monument', 76), ('well', 80)]),
     ('hang1', [('hsign', 44), ('hclock', 44), ('ring', 40), ('hams', 40), ('hoist', 52)]),
     ('hang2', [('pipes', 36), ('fan', 20), ('parts', 46), ('roots', 22), ('banner', 60)]),
     ('train', [('train', 46)]),
 ]
-SHINE = {'ring': 'warm yellow', 'coil': 'cyan', 'candles': 'warm yellow', 'sauteur': 'red orange', 'garde': 'cyan', 'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
+SHINE = {'booth': 'warm', 'ring': 'warm yellow', 'coil': 'cyan', 'candles': 'warm yellow', 'sauteur': 'red orange', 'garde': 'cyan', 'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
          'lamp': 'warm', 'table': 'warm', 'chandelier': 'warm', 'train': 'warm yellow', 'hanglamp': 'warm', 'lantern': 'warm yellow', 'signal': 'red'}
 for sheet, objs in SHEETS:
     im = load(sheet)

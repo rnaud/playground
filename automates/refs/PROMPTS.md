@@ -102,3 +102,5 @@ Four more 16:9 sheets. The floor sheets ask for "six separate flat things lying 
 | `clutter2` | Persian rug, round Art Deco rug, autumn leaves; oil stain with a wrench, blueprint sheets, coiled cable |
 | `hang1` | station arrow sign on two chains, double-faced station clock, iron ring of candles, rail of ham, sausages and garlic, chain hoist |
 | `hang2` | run of brass pipes with a valve wheel, ceiling fan, rail of automaton parts, hanging tree roots, crimson banner with a cog emblem |
+
+| `props-centre` | ticket turnstile, octagonal ticket booth, stone sarcophagus, pedestal of stacked skulls with a cross, stone well with a bucket (five free-standing objects, front view, for the middles of the junction and the catacomb rooms) |
