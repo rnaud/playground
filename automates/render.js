@@ -3,7 +3,10 @@
 //   1. Every mesh, the floor and ceiling planes and the particle cubes are drawn into a G-buffer (colour, normal, depth).
 //   2. One full-screen pass lights each pixel from the nearest lamps, with shadows: walls are traced through the level
 //      grid, and enemies and furniture are treated as upright cylinders. Ambient light comes from the baked light map.
-//   3. Smoke is blended in, then the picture is bloomed, tone-mapped and resolved onto the canvas.
+//      Furniture, arches and hedges shadow too: a map of what stands where, and how tall, is walked towards each lamp.
+//   3. Smoke is blended in, and the frame is merged with the ones before it (temporal anti-aliasing: the picture is drawn
+//      a fraction of a pixel off each frame, so the merged result is smooth), then bloomed, tone-mapped and put on the canvas.
+// The camera turns about the vertical and looks up and down by shearing the picture, so walls always stay upright.
 // Meshes use the same vertex layout as shared/voxel.js: x, y, corner z, layer, r, g, b, normal. A red above 1 marks a
 // glowing voxel and a green above 1 a shiny one.
 const MAXL = 16, MAXO = 10;
@@ -12,7 +15,7 @@ function AutomatesRenderer(canvas, world, GW, GH) {
   if (!gl) return null;
   const hdr = !!(gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float'));
   const aniso = gl.getExtension('EXT_texture_filter_anisotropic');
-  const SS = Math.max(1, Math.min(2, +new URLSearchParams(location.search).get('ss') || 1.25)), W = Math.round(canvas.width * SS), H = Math.round(canvas.height * SS);
+  const SS = Math.max(1, Math.min(2, +new URLSearchParams(location.search).get('ss') || 1)), W = Math.round(canvas.width * SS), H = Math.round(canvas.height * SS);
   const prog = (vs, fs) => {
     const p = gl.createProgram();
     for (const [t, src] of [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]]) {
@@ -34,9 +37,10 @@ function AutomatesRenderer(canvas, world, GW, GH) {
   const colour = (w, h) => hdr ? tex(w, h, gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT, gl.LINEAR) : tex(w, h, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.LINEAR);
 
   // ---- the camera, shared by every geometry shader: eye x, y, yaw, height / focal over half width, over half height, near, far ----
-  const CAM = `uniform vec4 u_eye, u_proj;
+  // u_view: how far the view is tipped up (as a slope), and this frame's sub-pixel offset
+  const CAM = `uniform vec4 u_eye, u_proj; uniform vec3 u_view;
 vec4 project(vec3 w) { vec2 d = w.xy - u_eye.xy; float c = cos(u_eye.z), s = sin(u_eye.z), f = d.x * c + d.y * s;
-  return vec4((d.y * c - d.x * s) * u_proj.x, (w.z - u_eye.w) * u_proj.y, (f * (u_proj.w + u_proj.z) - 2.0 * u_proj.w * u_proj.z) / (u_proj.w - u_proj.z), f); }\n`;
+  return vec4((d.y * c - d.x * s) * u_proj.x + u_view.y * f, (w.z - u_eye.w - u_view.x * f) * u_proj.y + u_view.z * f, (f * (u_proj.w + u_proj.z) - 2.0 * u_proj.w * u_proj.z) / (u_proj.w - u_proj.z), f); }\n`;
   const GOUT = `layout(location = 0) out vec4 o_a; layout(location = 1) out vec4 o_n;\n`;
   const meshP = prog(CAM + `layout(location = 0) in vec3 a_pos; layout(location = 1) in float a_layer; layout(location = 2) in vec3 a_color; layout(location = 3) in vec3 a_normal;
 uniform mat4 u_model; uniform float u_vox, u_flash; out vec3 v_color, v_normal; out vec2 v_mat;
@@ -54,31 +58,35 @@ void main() { o_a = vec4(v_color, v_mat.x); o_n = vec4(normalize(v_normal) * 0.5
   // floors and ceilings: one textured plane each. The picture's own light and dark is read as height, and the view ray is
   // marched down into it, so joints and gaps between stones really sit below the surface and hide behind their edges.
   const groundP = prog(CAM + `layout(location = 0) in vec2 a_p; uniform float u_height; out vec2 v_w;
-void main() { v_w = a_p; gl_Position = project(vec3(a_p, u_height)); }`, GOUT + `in vec2 v_w; uniform sampler2D u_tex, u_cells; uniform float u_world, u_up, u_height; uniform vec2 u_grid, u_texel; uniform vec4 u_eye;
-float lum(vec2 uv) { return dot(texture(u_tex, uv).rgb, vec3(0.3, 0.59, 0.11)); }
+void main() { v_w = a_p; gl_Position = project(vec3(a_p, u_height)); }`, GOUT + `in vec2 v_w; uniform highp sampler2DArray u_tex; uniform sampler2D u_cells; uniform float u_up, u_height; uniform vec4 u_eye;
+const float TILE = 32.0, TEXEL = 1.0 / 256.0;                         // a picture covers two cells each way and repeats
+vec2 gx, gy; float layer;
+vec4 tx(vec2 uv) { return textureGrad(u_tex, vec3(uv, layer), gx, gy); }
+float lum(vec2 uv) { return dot(tx(uv).rgb, vec3(0.3, 0.59, 0.11)); }
 void main() {
-  vec2 uv = v_w / u_world; if (texture(u_tex, uv).a < 0.5) discard;
+  vec4 cell = texelFetch(u_cells, ivec2(v_w / 16.0), 0); layer = floor((u_up > 0.0 ? cell.b : cell.a) * 255.0 + 0.5); if (layer > 254.0) discard;   // each cell names its picture, or none
+  vec2 uv = v_w / TILE; gx = dFdx(uv); gy = dFdy(uv);
   vec3 D = normalize(vec3(v_w, u_height) - vec3(u_eye.xy, u_eye.w)); float deep = 0.55, steps = 10.0, dz = max(abs(D.z), 0.22);
-  vec2 stp = D.xy / dz * (deep / steps) / u_world; float d = 0.0;
-  for (int i = 0; i < 10; i++) { vec2 q = uv + stp; if (texture(u_tex, q).a < 0.5 || d + deep / steps > (1.0 - lum(q)) * deep) break; uv = q; d += deep / steps; }
-  vec4 t = texture(u_tex, uv);
-  float l = lum(uv), k = 2.6; vec3 n = normalize(vec3((l - lum(uv + vec2(u_texel.x, 0.0))) * k, (l - lum(uv + vec2(0.0, u_texel.y))) * k, 1.0)); n.z *= u_up;
-  o_a = vec4(t.rgb * (1.0 - d * 0.5), 0.0); o_n = vec4(n * 0.5 + 0.5, u_up > 0.0 ? texelFetch(u_cells, ivec2(v_w / 16.0), 0).g : 0.0);
+  vec2 stp = D.xy / dz * (deep / steps) / TILE; float d = 0.0;
+  for (int i = 0; i < 10; i++) { vec2 q = uv + stp; if (d + deep / steps > (1.0 - lum(q)) * deep) break; uv = q; d += deep / steps; }
+  vec4 t = tx(uv);
+  float l = lum(uv), k = 2.6; vec3 n = normalize(vec3((l - lum(uv + vec2(TEXEL, 0.0))) * k, (l - lum(uv + vec2(0.0, TEXEL))) * k, 1.0)); n.z *= u_up;
+  o_a = vec4(t.rgb * (1.0 - d * 0.5), 0.0); o_n = vec4(n * 0.5 + 0.5, u_up > 0.0 ? cell.g : 0.0);
 }`);
   const FULL = `out vec2 v; void main() { v = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(v * 2.0 - 1.0, 0.0, 1.0); }`;
   const lightP = prog(FULL, `in vec2 v; out vec4 o;
-uniform sampler2D u_a, u_n, u_d, u_lm, u_cells, u_prev; uniform vec4 u_eye, u_proj, u_fog; uniform float u_world, u_far, u_sky, u_time, u_fast; uniform vec2 u_grid;
+uniform sampler2D u_a, u_n, u_d, u_lm, u_cells, u_prev, u_things; uniform vec4 u_eye, u_proj, u_fog; uniform vec3 u_view; uniform float u_world, u_far, u_sky, u_time, u_fast; uniform vec2 u_grid;
 uniform vec4 u_lp[${MAXL}], u_lc[${MAXL}], u_occ[${MAXO}]; uniform int u_nl, u_no;
 float fwdOf(float z) { if (z < 0.1) z *= 10.0;                       // the weapon in hand is drawn into the front tenth of the depth range
   float A = (u_proj.w + u_proj.z) / (u_proj.w - u_proj.z), B = 2.0 * u_proj.w * u_proj.z / (u_proj.w - u_proj.z); return B / (A - (z * 2.0 - 1.0)); }
-vec3 worldAt(vec2 uv, float f) { vec2 ndc = uv * 2.0 - 1.0; float c = cos(u_eye.z), s = sin(u_eye.z); return vec3(u_eye.xy + f * vec2(c, s) + ndc.x * f / u_proj.x * vec2(-s, c), u_eye.w + ndc.y * f / u_proj.y); }
-vec3 screenOf(vec3 p) { vec2 d = p.xy - u_eye.xy; float c = cos(u_eye.z), s = sin(u_eye.z), f = d.x * c + d.y * s; return vec3(vec2((d.y * c - d.x * s) * u_proj.x, (p.z - u_eye.w) * u_proj.y) / max(f, 0.01) * 0.5 + 0.5, f); }
+vec3 worldAt(vec2 uv, float f) { vec2 ndc = uv * 2.0 - 1.0 - u_view.yz; float c = cos(u_eye.z), s = sin(u_eye.z); return vec3(u_eye.xy + f * vec2(c, s) + ndc.x * f / u_proj.x * vec2(-s, c), u_eye.w + (ndc.y / u_proj.y + u_view.x) * f); }
+vec3 screenOf(vec3 p) { vec2 d = p.xy - u_eye.xy; float c = cos(u_eye.z), s = sin(u_eye.z), f = d.x * c + d.y * s; return vec3(vec2((d.y * c - d.x * s) * u_proj.x, (p.z - u_eye.w - u_view.x * f) * u_proj.y) / max(f, 0.01) * 0.5 + 0.5, f); }
 float solid(vec2 cell) { return cell.x < 0.0 || cell.y < 0.0 || cell.x >= u_grid.x || cell.y >= u_grid.y ? 1.0 : texelFetch(u_cells, ivec2(cell), 0).r; }
 float wall(vec2 p, vec2 l) {                                          // walk the level grid from the pixel to the lamp: any wall cell on the way is shadow
   vec2 d = l - p; float len = length(d); if (len < 0.01) return 1.0;
   vec2 dir = d / len, cell = floor(p / 16.0), stp = sign(dir), tD = 16.0 / max(abs(dir), vec2(1e-5)), tM = ((cell + step(vec2(0.0), dir)) * 16.0 - p) / (dir + vec2(1e-6) * (1.0 - abs(stp)));
   tM = mix(vec2(1e9), tM, abs(stp));
-  for (int i = 0; i < 16; i++) { if (min(tM.x, tM.y) >= len) return 1.0; if (tM.x < tM.y) { cell.x += stp.x; tM.x += tD.x; } else { cell.y += stp.y; tM.y += tD.y; } if (solid(cell) > 0.5) return 0.0; }
+  for (int i = 0; i < 24; i++) { if (min(tM.x, tM.y) >= len) return 1.0; if (tM.x < tM.y) { cell.x += stp.x; tM.x += tD.x; } else { cell.y += stp.y; tM.y += tD.y; } if (solid(cell) > 0.5) return 0.0; }
   return 1.0;
 }
 float bodies(vec3 p, vec3 l) {                                        // enemies and furniture cast soft shadows as upright cylinders: x, y, radius, height
@@ -87,9 +95,14 @@ float bodies(vec3 p, vec3 l) {                                        // enemies
     float t = clamp(dot(pc, d) / dd, 0.0, 1.0); if (mix(p.z, l.z, t) < c.w) s = min(s, smoothstep(c.z * 0.55, c.z * 1.3, length(p.xy + d * t - c.xy))); }
   return s;
 }
+float things(vec3 p, vec3 l, float jit) {                             // furniture, arches and hedges: the map holds the top and the underside of whatever stands on each unit of floor
+  vec3 d = l - p;
+  for (int i = 0; i < 8; i++) { vec3 q = p + d * (float(i) + jit) / 8.0; vec2 h = texelFetch(u_things, ivec2(q.xy), 0).rg * 32.0; if (q.z < h.r && q.z > h.g) return 0.0; }
+  return 1.0;
+}
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 vec3 skyAt(vec2 uv) {                                                 // dusk over Paris: a gradient, stars, a skyline of roofs with lit windows, and the tower
-  float e = (uv.y * 2.0 - 1.0) / u_proj.y, az = u_eye.z + atan((uv.x * 2.0 - 1.0) / u_proj.x);
+  float e = (uv.y * 2.0 - 1.0) / u_proj.y + u_view.x, az = u_eye.z + atan((uv.x * 2.0 - 1.0) / u_proj.x);
   vec3 sky = mix(vec3(1.0, 0.52, 0.34), vec3(0.17, 0.13, 0.36), smoothstep(-0.02, 0.6, e)) + step(0.9985, hash(floor(uv * vec2(420.0, 260.0)))) * smoothstep(0.15, 0.6, e) * 0.9;
   float b = floor(az * 46.0), roof = 0.045 + 0.085 * hash(vec2(b, 3.0)) + 0.03 * step(0.7, hash(vec2(b, 9.0)));
   float t = abs(mod(az + 1.5708 + 3.1416, 6.2832) - 3.1416), tower = 0.5 * (1.0 - smoothstep(0.0, 0.085, t + 0.002) ) ;   // due north
@@ -102,7 +115,7 @@ void main() {
   float z = texture(u_d, v).r; vec3 O = vec3(u_eye.xy, u_eye.w);
   if (z >= 1.0) { o = vec4(mix(vec3(0.03, 0.028, 0.04), skyAt(v), u_sky), 1.0); return; }
   float f = fwdOf(z); vec3 P = worldAt(v, f); vec4 A = texture(u_a, v), N = texture(u_n, v); vec3 n = normalize(N.xyz * 2.0 - 1.0), V = normalize(O - P);
-  float occ = 0.0, rot = hash(v * 931.0) * 6.283;                     // ambient occlusion from the neighbouring pixels' positions
+  float occ = 0.0, rot = hash(v * 931.0 + u_time) * 6.283;                     // ambient occlusion from the neighbouring pixels' positions
   for (int i = 0; i < 8; i++) { float a = rot + float(i) * 0.785, r = (0.35 + 0.65 * fract(float(i) * 0.618)) * 2.2; vec2 uv = v + vec2(cos(a) * u_proj.x, sin(a) * u_proj.y) * r / f * 0.5;
     vec3 q = worldAt(uv, fwdOf(texture(u_d, uv).r)) - P; float d2 = dot(q, q); occ += max(dot(n, q) / sqrt(d2 + 1e-4) - 0.12, 0.0) / (1.0 + d2 * 0.12); }
   float ao = 1.0 - min(occ / 8.0 * 2.4, 0.8);
@@ -116,7 +129,7 @@ void main() {
     vec3 d = L.xyz - P; float dist = length(d); if (dist > L.w) continue;
     vec3 ld = d / dist; float ndl = dot(n, ld) * 0.8 + 0.2; if (ndl <= 0.0) continue;
     vec2 from = P.xy + n.xy * 1.4, side = vec2(-ld.y, ld.x) * 2.5; float sh = 0.5 * (wall(from, L.xy + side) + wall(from, L.xy - side)); if (sh <= 0.0) continue;
-    float k = pow(1.0 - dist / L.w, 2.0) * sh * bodies(P, L.xyz);
+    float k = pow(1.0 - dist / L.w, 2.0) * sh * bodies(P, L.xyz); if (u_fast < 0.5 && k > 0.012) k *= things(P + n * 1.3, L.xyz, jit);
     diff += lc * ndl * k; spec += lc * pow(max(dot(n, normalize(ld + V)), 0.0), 48.0) * k;
   }
   vec3 amb = texture(u_lm, P.xy / u_world).rgb;
@@ -152,16 +165,21 @@ void main() {
   c += (fract(sin(dot(v * 913.0 + u_time, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.018;
   o = vec4(mix(max(c, 0.0), vec3(0.7, 0.0, 0.0), u_pain * dot(q, q) * 2.4), 1.0);
 }`);
-  // anti-aliasing on the finished picture (FXAA): soften only along edges
-  const fxaaP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex; uniform vec2 u_texel;
-float lu(vec2 uv) { return dot(texture(u_tex, uv).rgb, vec3(0.3, 0.59, 0.11)); }
+  // temporal anti-aliasing: find where each pixel was in the last frame and merge with it, unless what was there is too different
+  const taaP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_cur, u_hist, u_d; uniform vec4 u_eye, u_proj, u_peye; uniform vec3 u_view; uniform float u_ppitch, u_keep; uniform vec2 u_texel;
 void main() {
-  float m = lu(v), nw = lu(v + vec2(-1.0, 1.0) * u_texel), ne = lu(v + vec2(1.0, 1.0) * u_texel), sw = lu(v + vec2(-1.0, -1.0) * u_texel), se = lu(v + vec2(1.0, -1.0) * u_texel);
-  float lo = min(m, min(min(nw, ne), min(sw, se))), hi = max(m, max(max(nw, ne), max(sw, se)));
-  vec2 dir = vec2(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se)); float rd = 1.0 / (min(abs(dir.x), abs(dir.y)) + max((nw + ne + sw + se) * 0.03125, 0.0078));
-  dir = clamp(dir * rd, -8.0, 8.0) * u_texel;
-  vec3 a = 0.5 * (texture(u_tex, v + dir * (1.0 / 3.0 - 0.5)).rgb + texture(u_tex, v + dir * (2.0 / 3.0 - 0.5)).rgb), b = a * 0.5 + 0.25 * (texture(u_tex, v - dir * 0.5).rgb + texture(u_tex, v + dir * 0.5).rgb);
-  float lb = dot(b, vec3(0.3, 0.59, 0.11)); o = vec4(lb < lo || lb > hi ? a : b, 1.0);
+  float z = texture(u_d, v).r; vec2 puv = v;
+  if (z >= 0.1) {                                                      // (the weapon in hand stays where it is on the screen)
+    float A = (u_proj.w + u_proj.z) / (u_proj.w - u_proj.z), B = 2.0 * u_proj.w * u_proj.z / (u_proj.w - u_proj.z), f = z >= 1.0 ? 4000.0 : B / (A - (z * 2.0 - 1.0));
+    vec2 ndc = v * 2.0 - 1.0 - u_view.yz; float c = cos(u_eye.z), s = sin(u_eye.z);
+    vec3 P = vec3(u_eye.xy + f * vec2(c, s) + ndc.x * f / u_proj.x * vec2(-s, c), u_eye.w + (ndc.y / u_proj.y + u_view.x) * f);
+    vec2 d = P.xy - u_peye.xy; float pc = cos(u_peye.z), ps = sin(u_peye.z), pf = d.x * pc + d.y * ps;
+    puv = pf > 0.01 ? vec2((d.y * pc - d.x * ps) * u_proj.x, (P.z - u_peye.w - u_ppitch * pf) * u_proj.y) / pf * 0.5 + 0.5 : vec2(-1.0);
+  }
+  vec3 c0 = texture(u_cur, v).rgb, mn = c0, mx = c0;
+  for (int i = 0; i < 8; i++) { int k = i < 4 ? i : i + 1; vec3 q = texture(u_cur, v + (vec2(float(k % 3), float(k / 3)) - 1.0) * u_texel).rgb; mn = min(mn, q); mx = max(mx, q); }
+  float keep = u_keep * step(0.0, puv.x) * step(puv.x, 1.0) * step(0.0, puv.y) * step(puv.y, 1.0);
+  o = vec4(mix(c0, clamp(textureLod(u_hist, puv, 0.0).rgb, mn, mx), keep), 1.0);
 }`);
 
   // ---- targets ----
@@ -169,9 +187,10 @@ void main() {
   const gF = fbo(gA, gN); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, gD, 0); gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
   const mipped = t => { gl.bindTexture(gl.TEXTURE_2D, t); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.generateMipmap(gl.TEXTURE_2D); return t; };
   const lits = [0, 1].map(() => { const t = mipped(colour(W, H)); return { t, f: fbo(t) }; }), bloom = [];   // this frame and the last one: reflections read the previous frame
-  const exps = [0, 1].map(() => { const t = colour(1, 1); return { t, f: fbo(t) }; }), ldr = tex(W, H, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.LINEAR), ldrF = fbo(ldr);
+  const exps = [0, 1].map(() => { const t = colour(1, 1); return { t, f: fbo(t) }; }), cur = colour(W, H), curF = fbo(cur);   // cur: this frame alone, before it is merged into the history
   for (const e of exps) { gl.bindFramebuffer(gl.FRAMEBUFFER, e.f); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT); }
-  let flip = 0;
+  let flip = 0, frame = 0, last = null, thingsT = null;
+  const halton = (i, b) => { let f = 1, x = 0; while (i > 0) { f /= b; x += f * (i % b); i = Math.floor(i / b); } return x; };
   for (let i = 1, w = W, h = H; i <= 5; i++) { w = Math.max(2, w >> 1); h = Math.max(2, h >> 1); const t = colour(w, h); bloom.push({ t, f: fbo(t), w, h }); }
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   const cellsT = tex(GW, GH, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, gl.NEAREST); let lmT = null;
@@ -192,7 +211,7 @@ void main() {
     for (const [s, t] of [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]]) cubeV.push(...[0, 1, 2].map(k => (n[k] + a[k] * s + b[k] * t) / 2), ...n);
   const cube = instanced(cubeV, [3, 3], 6), quad = instanced([-.5, -.5, .5, -.5, .5, .5, -.5, -.5, .5, .5, -.5, .5], [2], 2);
 
-  const meshes = new Map(), grounds = new Map();
+  const meshes = new Map(); let groundT = null;
   const vaoFor = m => {
     let e = meshes.get(m);
     if (!e) { const vao = gl.createVertexArray(), buf = gl.createBuffer(); gl.bindVertexArray(vao); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, m.data, gl.STATIC_DRAW);
@@ -200,28 +219,30 @@ void main() {
       meshes.set(m, e = { vao, buf }); }
     return e.vao;
   };
-  let eye = null, cam = null;
-  const camera = u => { gl.uniform4f(u.u_eye, eye.x, eye.y, eye.yaw, eye.z); gl.uniform4fv(u.u_proj, cam); };
+  let eye = null, cam = null, jit = [0, 0];
+  const camera = u => { gl.uniform4f(u.u_eye, eye.x, eye.y, eye.yaw, eye.z); gl.uniform4fv(u.u_proj, cam); gl.uniform3f(u.u_view, eye.pitch || 0, jit[0], jit[1]); };
   const bind = (unit, t, loc) => { gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t); gl.uniform1i(loc, unit); };
   const full = () => { gl.bindVertexArray(null); gl.drawArrays(gl.TRIANGLES, 0, 3); };
 
   return {
     stats: { draws: 0, tris: 0 }, hdr, fast: false,                 // fast: skip the light beams and floor reflections
     free(m) { const e = meshes.get(m); if (e) { gl.deleteBuffer(e.buf); gl.deleteVertexArray(e.vao); meshes.delete(m); } },   // for a mesh that has been rebuilt
-    setCells(rgba) { gl.bindTexture(gl.TEXTURE_2D, cellsT); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, GW, GH, gl.RGBA, gl.UNSIGNED_BYTE, rgba); },   // r: blocks light, g: how shiny the floor is
+    setCells(rgba) { gl.bindTexture(gl.TEXTURE_2D, cellsT); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, GW, GH, gl.RGBA, gl.UNSIGNED_BYTE, rgba); },   // r: blocks light, g: how shiny the floor is, b and a: which picture its floor and ceiling show
     setLightMap(rgb, n) { lmT = lmT || tex(n, n, gl.RGB8, gl.RGB, gl.UNSIGNED_BYTE, gl.LINEAR); gl.bindTexture(gl.TEXTURE_2D, lmT); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, n, n, gl.RGB, gl.UNSIGNED_BYTE, rgb); },
+    setThings(rg, n) { thingsT = thingsT || tex(n, n, gl.RG8, gl.RG, gl.UNSIGNED_BYTE, gl.NEAREST); gl.bindTexture(gl.TEXTURE_2D, thingsT); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, n, n, gl.RG, gl.UNSIGNED_BYTE, rg); },   // what stands on each unit of floor: its top and its underside, in 32nds of 255
     begin(e, focal, near, far) {
-      eye = e; cam = [focal / (canvas.width / 2), focal / (canvas.height / 2), near, far]; this.far = far; this.stats.draws = this.stats.tris = 0;
+      eye = e; frame++; jit = [(halton(frame % 8 + 1, 2) - .5) * 2 / W, (halton(frame % 8 + 1, 3) - .5) * 2 / H]; cam = [focal / (canvas.width / 2), focal / (canvas.height / 2), near, far]; this.far = far; this.stats.draws = this.stats.tris = 0;
       gl.bindFramebuffer(gl.FRAMEBUFFER, gF); gl.viewport(0, 0, W, H); gl.depthRange(0, 1); gl.disable(gl.BLEND); gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     },
-    ground(image, height, up) {                                      // a textured plane over the whole level: the floor, or a ceiling further up
-      let t = grounds.get(image);
-      if (!t) { t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image); gl.generateMipmap(gl.TEXTURE_2D);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        if (aniso) gl.texParameterf(gl.TEXTURE_2D, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
-        grounds.set(image, t); }
-      const u = groundP.u; gl.useProgram(groundP.p); camera(u); gl.uniform1f(u.u_height, height); gl.uniform1f(u.u_world, world); gl.uniform1f(u.u_up, up); gl.uniform2f(u.u_grid, GW, GH); gl.uniform2f(u.u_texel, 1 / image.width, 1 / image.height);
-      bind(0, t, u.u_tex); bind(1, cellsT, u.u_cells); gl.bindVertexArray(groundV); gl.drawArrays(gl.TRIANGLES, 0, 6); this.stats.draws++;
+    setGround(layers, size) {                                        // the floor and ceiling pictures, one layer each
+      const all = new Uint8Array(size * size * 4 * layers.length); layers.forEach((d, i) => all.set(d, i * size * size * 4));
+      groundT = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D_ARRAY, groundT); gl.texImage3D(gl.TEXTURE_2D_ARRAY, 0, gl.RGBA8, size, size, layers.length, 0, gl.RGBA, gl.UNSIGNED_BYTE, all); gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
+      gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      if (aniso) gl.texParameterf(gl.TEXTURE_2D_ARRAY, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
+    },
+    ground(height, up) {                                             // a plane over the whole level: the floor, or the ceiling
+      const u = groundP.u; gl.useProgram(groundP.p); camera(u); gl.uniform1f(u.u_height, height); gl.uniform1f(u.u_up, up);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY, groundT); gl.uniform1i(u.u_tex, 0); bind(1, cellsT, u.u_cells); gl.bindVertexArray(groundV); gl.drawArrays(gl.TRIANGLES, 0, 6); this.stats.draws++;
     },
     front(on) { gl.depthRange(0, on ? 0.1 : 1); },                   // what follows is drawn in front of everything else: the weapon in hand never pokes into a wall
     draw(m, M, vox, flash) {
@@ -234,30 +255,31 @@ void main() {
     },
     // light the frame and put it on screen. lights: [x, y, z, radius, r, g, b, air glow]; bodies: [x, y, radius, height]; smoke: x, y, z, size, r, g, b, alpha
     end(o) {
-      const lit = lits[flip].t, prev = lits[1 - flip].t, ex = exps[flip], exOld = exps[1 - flip];
+      const lit = lits[flip].t, prev = lits[1 - flip].t, ex = exps[flip], exOld = exps[1 - flip];   // lit: the merged picture; prev: last frame's
       gl.disable(gl.DEPTH_TEST); gl.depthMask(false);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, lits[flip].f); gl.viewport(0, 0, W, H);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, curF); gl.viewport(0, 0, W, H);
       const u = lightP.u, nl = Math.min(MAXL, o.lights.length), no = Math.min(MAXO, o.bodies.length), lp = new Float32Array(MAXL * 4), lc = new Float32Array(MAXL * 4), oc = new Float32Array(MAXO * 4);
       for (let i = 0; i < nl; i++) { lp.set(o.lights[i].slice(0, 4), i * 4); lc.set(o.lights[i].slice(4, 8), i * 4); }
       for (let i = 0; i < no; i++) oc.set(o.bodies[i], i * 4);
-      gl.useProgram(lightP.p); camera(u); bind(0, gA, u.u_a); bind(1, gN, u.u_n); bind(2, gD, u.u_d); bind(3, lmT, u.u_lm); bind(4, cellsT, u.u_cells); bind(5, prev, u.u_prev);
+      gl.useProgram(lightP.p); camera(u); bind(0, gA, u.u_a); bind(1, gN, u.u_n); bind(2, gD, u.u_d); bind(3, lmT, u.u_lm); bind(4, cellsT, u.u_cells); bind(5, prev, u.u_prev); bind(6, thingsT, u.u_things);
       gl.uniform4fv(u.u_lp, lp); gl.uniform4fv(u.u_lc, lc); gl.uniform4fv(u.u_occ, oc); gl.uniform1i(u.u_nl, nl); gl.uniform1i(u.u_no, no);
-      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0);
+      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform3f(u.u_view, eye.pitch || 0, jit[0], jit[1]); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0);
       full();
       if (o.smokeCount) {                                            // smoke sits in front of the lit scene and fades against it
         const s = smokeP.u; gl.useProgram(smokeP.p); camera(s); bind(2, gD, s.u_d); gl.uniform2f(s.u_size, W, H); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         gl.bindVertexArray(quad.vao); gl.bindBuffer(gl.ARRAY_BUFFER, quad.ib); gl.bufferData(gl.ARRAY_BUFFER, o.smoke.subarray(0, o.smokeCount * 8), gl.DYNAMIC_DRAW); gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, o.smokeCount); gl.disable(gl.BLEND);
       }
+      const t = taaP.u, pe = last || eye; gl.useProgram(taaP.p); gl.bindFramebuffer(gl.FRAMEBUFFER, lits[flip].f); bind(0, cur, t.u_cur); bind(1, prev, t.u_hist); bind(2, gD, t.u_d);
+      gl.uniform4f(t.u_eye, eye.x, eye.y, eye.yaw, eye.z); gl.uniform4fv(t.u_proj, cam); gl.uniform3f(t.u_view, eye.pitch || 0, jit[0], jit[1]); gl.uniform4f(t.u_peye, pe.x, pe.y, pe.yaw, pe.z); gl.uniform1f(t.u_ppitch, pe.pitch || 0);
+      gl.uniform1f(t.u_keep, last && !o.cut ? 0.88 : 0); gl.uniform2f(t.u_texel, 1 / W, 1 / H); full(); last = eye;
       gl.bindTexture(gl.TEXTURE_2D, lit); gl.generateMipmap(gl.TEXTURE_2D);                               // its smallest level is the average brightness of the frame
       gl.useProgram(exposeP.p); gl.bindFramebuffer(gl.FRAMEBUFFER, ex.f); gl.viewport(0, 0, 1, 1); bind(0, lit, exposeP.u.u_tex); bind(1, exOld.t, exposeP.u.u_old); full();
       gl.useProgram(downP.p);                                        // bloom: keep what is brighter than white, and blur it at five scales
       bloom.forEach((b, i) => { gl.bindFramebuffer(gl.FRAMEBUFFER, b.f); gl.viewport(0, 0, b.w, b.h); bind(0, i ? bloom[i - 1].t : lit, downP.u.u_tex); gl.uniform2f(downP.u.u_texel, 1 / (i ? bloom[i - 1].w : W), 1 / (i ? bloom[i - 1].h : H)); gl.uniform1f(downP.u.u_cut, i ? 0 : 1); full(); });
-      gl.bindFramebuffer(gl.FRAMEBUFFER, ldrF); gl.viewport(0, 0, W, H);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height);
       const f = finalP.u, g = o.grade || [1, 1, 1, 1]; gl.useProgram(finalP.p); bind(0, lit, f.u_tex); bind(1, bloom[1].t, f.u_b0); bind(2, bloom[2].t, f.u_b1); bind(3, bloom[3].t, f.u_b2); bind(4, bloom[4].t, f.u_b3); bind(5, ex.t, f.u_exp);
       gl.uniform1f(f.u_time, o.time % 10); gl.uniform1f(f.u_pain, o.pain || 0); gl.uniform4f(f.u_grade, g[0], g[1], g[2], g[3]);
       full();
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.useProgram(fxaaP.p); bind(0, ldr, fxaaP.u.u_tex); gl.uniform2f(fxaaP.u.u_texel, 1 / W, 1 / H); full();
       flip = 1 - flip;
     },
   };
