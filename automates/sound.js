@@ -52,6 +52,9 @@ function Sound(ctx) {
     },
     boom: (d, t) => { const w = drive(4); w.connect(d); tone(w, t, 1, 1, 'sine', 82, 24, .004); noise(w, t, .9, .9, 'lowpass', 900, 70); noise(d, t, .12, .6, 'bandpass', 2400, 600); noise(d, t + .25, 1.3, .22, 'lowpass', 400, 90, .5, .2); for (let i = 0; i < 6; i++) tick(d, t + rnd(.3, 1.3), rnd(.05, .15), rnd(1200, 3500)); },
     enemy: (d, t) => shot(d, t, .5, .45, 78, .2),
+    smash: (d, t) => { noise(d, t, .28, .5, 'bandpass', 900, 260, 1); tick(d, t, .4, 1800); tone(d, t, .14, .3, 'sine', 130, 60); for (let i = 0; i < 4; i++) tick(d, t + .05 + i * .04, .2, rnd(900, 2400)); },   // wood and hoops giving way
+    glass: (d, t) => { noise(d, t, .32, .3, 'highpass', 5200, 7400, .6); for (let i = 0; i < 7; i++) { tick(d, t + i * .028, .26, rnd(4200, 8200)); tone(d, t + i * .03, .08, .05, 'sine', rnd(2600, 5200)); } },                       // a pane, or a chandelier
+    roar: (d, t) => { const w = drive(3); w.connect(d); for (const f of [55, 82.5, 110, 164]) tone(w, t, 1.3, .16, 'sawtooth', f * .9, f, .25); noise(d, t, 1.2, .22, 'lowpass', 500, 160, 1, .2); tone(d, t + .1, .9, .1, 'square', 220, 147, .1); },   // Le Colosse: a furnace and a foghorn
     charge: (d, t) => { tone(d, t, .38, .1, 'sawtooth', 170, 760, .2); tone(d, t, .38, .05, 'square', 340, 1520, .25); },   // a machine's gun winding up before it fires
     casing: (d, t) => { tick(d, t, .1, 5200); tone(d, t, .05, .05, 'sine', rnd(3600, 4600)); tick(d, t + .09, .05, 6000); },                     // a spent case on the floor
     wake: (d, t) => { tone(d, t, .16, .12, 'square', 260, 620); tone(d, t + .02, .16, .06, 'sawtooth', 520, 1240); for (let i = 0; i < 4; i++) tick(d, t + .2 + i * .045, .12, 2600); },   // a servo spinning up and a ratchet

@@ -19,6 +19,16 @@
   #hit { left:50%; top:50%; width:22px; height:22px; color:#fff; opacity:0; transform:translate(-50%,-50%) rotate(45deg);
     background:linear-gradient(currentColor,currentColor) center/2px 100% no-repeat, linear-gradient(currentColor,currentColor) center/100% 2px no-repeat;
     -webkit-mask:radial-gradient(circle, transparent 4px, #000 5px); mask:radial-gradient(circle, transparent 4px, #000 5px); filter:drop-shadow(0 0 1px #000); }
+  #boss { display:none; left:50%; top:14px; width:min(520px, 70vw); height:12px; transform:translateX(-50%); background:rgba(20,14,12,.8); border:2px solid #6e5a3c; border-radius:3px; }
+  #boss u { display:block; height:100%; width:100%; background:linear-gradient(#ff6a3a,#b3241a); }
+  #boss::after { content:'LE COLOSSE'; position:absolute; left:0; right:0; top:15px; text-align:center; font-size:11px; letter-spacing:4px; color:#ffcf5c; text-shadow:0 1px 0 #000; }
+  #bar small b { color:#ffcf5c; }
+  #cap { left:0; right:0; bottom:13vh; text-align:center; color:#ffe9a0; font-size:clamp(15px,2.6vw,26px); letter-spacing:5px; text-shadow:0 2px 0 #000, 0 0 12px #000; z-index:2; }
+  /* the title and the opening: no status bar, letterbox bars, and the level showing through behind the words */
+  .cine #bar, .cine #cross, .cine #touch, .cine #log, .cine #fps, .cine #stats { display:none; }
+  .cine::before, .cine::after { content:''; position:fixed; left:0; right:0; height:9vh; background:#000; z-index:1; pointer-events:none; }
+  .cine::before { top:0; } .cine::after { bottom:0; }
+  .cine #screen { background:radial-gradient(ellipse at center, rgba(10,8,12,.5), rgba(10,8,12,.86)); }
   #dmg { left:50%; top:50%; width:0; height:0; }
   #dmg i { position:absolute; left:-120px; top:-120px; width:240px; height:240px; box-sizing:border-box; border-radius:50%; border:10px solid transparent; border-top-color:rgba(255,64,44,.92); filter:blur(1.5px); opacity:0; }
   #log { left:10px; top:52px; color:#ffe9a0; font-size:13px; text-shadow:0 1px 0 #000, 0 0 4px #000; white-space:pre-line; }
@@ -47,11 +57,13 @@
 <a id="home" href="../">&larr; playground</a>
 <span id="cross" class="ov"></span>
 <span id="hit" class="ov"></span>
+<div id="boss" class="ov"><u></u></div>
 <div id="dmg" class="ov"><i></i><i></i><i></i><i></i></div>
 <span id="log" class="ov"></span>
+<div id="cap" class="ov"></div>
 <span id="pain" class="ov"></span>
 <div id="bar">
-  <div><span id="ammo">0</span><small>MUNITIONS</small></div>
+  <div><span id="ammo">0</span><small>MUNITIONS &middot; GRENADES <b id="nades">0</b></small></div>
   <div><span id="health">100</span>%<small>SANT&Eacute;</small></div>
   <canvas id="face" width="24" height="24"></canvas>
   <div><span id="armour">0</span>%<small>ARMURE</small></div>

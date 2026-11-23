@@ -168,7 +168,7 @@ SHEETS = [
     ('props-rooms', [('chandelier', 44), ('arch', 76), ('rack', 60), ('workbench', 34)]),
     ('train', [('train', 46)]),
 ]
-SHINE = {'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
+SHINE = {'sauteur': 'red orange', 'garde': 'cyan', 'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
          'lamp': 'warm', 'table': 'warm', 'chandelier': 'warm', 'train': 'warm yellow', 'hanglamp': 'warm', 'lantern': 'warm yellow', 'signal': 'red'}
 for sheet, objs in SHEETS:
     im = load(sheet)
@@ -201,7 +201,7 @@ def outline_distance(im):
             if d[y][x]: d[y][x] = min(d[y][x], at(x + 1, y) + 1, at(x, y + 1) + 1, at(x + 1, y + 1) + 1.4, at(x - 1, y + 1) + 1.4)
     return d
 vox = {}
-for name, hv in [('automate', 68), ('scaphandre', 80), ('colosse', 92)]:
+for name, hv in [('automate', 68), ('scaphandre', 80), ('colosse', 92), ('sauteur', 70), ('garde', 80)]:
     im = load('turn-' + name)
     if not im: continue
     views = components(key(im), 3)

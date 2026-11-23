@@ -66,3 +66,10 @@ Glowing pixels (lamp glass, furnace grilles, portholes, muzzle flashes) are pick
 | --- | --- | --- |
 | `guns-side` | 16:9 | Four guns "each shown exactly from the side as a flat orthographic side elevation ... every barrel pointing to the right, no hands", on magenta. `build_art.py` carves each into a 3D model with a fixed, rounded thickness (a top-view sheet was requested twice and came back as side views both times). |
 | `hand` | 16:9 | "Two views of the same right forearm and hand ... seen exactly from the side ... seen exactly from directly above", fist closed, on magenta. Carved from both views. |
+
+### Added for the two new machines
+
+| Files | Aspect | What it is |
+| --- | --- | --- |
+| `turn-sauteur` | 16:9 | The same turnaround prompt as the other machines (magenta background, front, left profile and back in one row, neutral A-pose), for "Le Sauteur, a lean 1930s French art-deco clockwork fencer automaton: thin polished brass and dark green enamel body, narrow waist, long straight legs with coiled steel springs wrapped around the shins, long thin arms that end in short steel blades instead of hands, a small narrow head with a fencing-mask grille and a single glowing orange eye, a small red kepi cap". |
+| `turn-garde` | 16:9 | The same again for "Le Garde, a broad heavy 1930s French art-deco clockwork riot gendarme automaton: thick navy blue enamel armour plates with brass rivets and brass trim, wide shoulders with round pauldrons, a barrel chest with a brass radiator grille, a helmet shaped like a French Adrian helmet with a narrow visor slit glowing cyan, sturdy legs with brass knee caps, heavy gauntlets", with empty hands: its shield is built in code. |

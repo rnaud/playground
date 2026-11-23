@@ -58,13 +58,13 @@ void main() { o_a = vec4(v_color, v_mat.x); o_n = vec4(normalize(v_normal) * 0.5
   // floors and ceilings: one textured plane each. The picture's own light and dark is read as height, and the view ray is
   // marched down into it, so joints and gaps between stones really sit below the surface and hide behind their edges.
   const groundP = prog(CAM + `layout(location = 0) in vec2 a_p; uniform float u_height; out vec2 v_w;
-void main() { v_w = a_p; gl_Position = project(vec3(a_p, u_height)); }`, GOUT + `in vec2 v_w; uniform highp sampler2DArray u_tex; uniform sampler2D u_cells; uniform float u_up, u_height; uniform vec4 u_eye;
+void main() { v_w = a_p; gl_Position = project(vec3(a_p, u_height)); }`, GOUT + `in vec2 v_w; uniform highp sampler2DArray u_tex; uniform sampler2D u_cells; uniform float u_up, u_height, u_level; uniform vec4 u_eye;
 const float TILE = 32.0, TEXEL = 1.0 / 256.0;                         // a picture covers two cells each way and repeats
 vec2 gx, gy; float layer;
 vec4 tx(vec2 uv) { return textureGrad(u_tex, vec3(uv, layer), gx, gy); }
 float lum(vec2 uv) { return dot(tx(uv).rgb, vec3(0.3, 0.59, 0.11)); }
 void main() {
-  vec4 cell = texelFetch(u_cells, ivec2(v_w / 16.0), 0); layer = floor((u_up > 0.0 ? cell.b : cell.a) * 255.0 + 0.5); if (layer > 254.0) discard;   // each cell names its picture, or none
+  vec4 cell = texelFetch(u_cells, ivec2(v_w / 16.0), 0); float code = floor((u_up > 0.0 ? cell.b : cell.a) * 255.0 + 0.5); if (code > 254.0 || floor(code / 32.0) != u_level) discard; layer = mod(code, 32.0);   // each cell names its picture (or none) and which level it lies on
   vec2 uv = v_w / TILE; gx = dFdx(uv); gy = dFdy(uv);
   vec3 D = normalize(vec3(v_w, u_height) - vec3(u_eye.xy, u_eye.w)); float deep = 0.55, steps = 10.0, dz = max(abs(D.z), 0.22);
   vec2 stp = D.xy / dz * (deep / steps) / TILE; float d = 0.0;
@@ -75,7 +75,7 @@ void main() {
 }`);
   const FULL = `out vec2 v; void main() { v = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(v * 2.0 - 1.0, 0.0, 1.0); }`;
   const lightP = prog(FULL, `in vec2 v; out vec4 o;
-uniform sampler2D u_a, u_n, u_d, u_lm, u_cells, u_prev, u_things; uniform vec4 u_eye, u_proj, u_fog; uniform vec3 u_view; uniform float u_world, u_far, u_sky, u_time, u_fast; uniform vec2 u_grid;
+uniform sampler2D u_a, u_n, u_d, u_lm, u_cells, u_prev, u_things; uniform vec4 u_eye, u_proj, u_fog; uniform vec3 u_view; uniform float u_world, u_far, u_sky, u_time, u_fast, u_dim; uniform vec2 u_grid;
 uniform vec4 u_lp[${MAXL}], u_lc[${MAXL}], u_occ[${MAXO}]; uniform int u_nl, u_no;
 float fwdOf(float z) { if (z < 0.1) z *= 10.0;                       // the weapon in hand is drawn into the front tenth of the depth range
   float A = (u_proj.w + u_proj.z) / (u_proj.w - u_proj.z), B = 2.0 * u_proj.w * u_proj.z / (u_proj.w - u_proj.z); return B / (A - (z * 2.0 - 1.0)); }
@@ -132,7 +132,7 @@ void main() {
     float k = pow(1.0 - dist / L.w, 2.0) * sh * bodies(P, L.xyz); if (u_fast < 0.5 && k > 0.012) k *= things(P + n * 1.3, L.xyz, jit);
     diff += lc * ndl * k; spec += lc * pow(max(dot(n, normalize(ld + V)), 0.0), 48.0) * k;
   }
-  vec3 amb = texture(u_lm, P.xy / u_world).rgb;
+  vec3 amb = texture(u_lm, P.xy / u_world).rgb * u_dim;                 // (the baked light dims when the lamps go out)
   vec3 c = A.rgb * (amb * ao + diff * mix(1.0, ao, 0.5)) + spec * N.a * 0.9;
   if (u_fast < 0.5 && N.a > 0.3 && n.z > 0.6) {                                        // polished floors mirror the room: follow the reflected ray across the last frame until it meets something
     vec3 Rr = reflect(D, normalize(mix(vec3(0.0, 0.0, 1.0), n, 0.35))); float hit = 0.0; vec2 huv = v;
@@ -240,8 +240,8 @@ void main() {
       gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR); gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       if (aniso) gl.texParameterf(gl.TEXTURE_2D_ARRAY, aniso.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(aniso.MAX_TEXTURE_MAX_ANISOTROPY_EXT)));
     },
-    ground(height, up) {                                             // a plane over the whole level: the floor, or the ceiling
-      const u = groundP.u; gl.useProgram(groundP.p); camera(u); gl.uniform1f(u.u_height, height); gl.uniform1f(u.u_up, up);
+    ground(height, up, level) {                                      // a plane over the whole map, drawn only where the cells are on this level: a floor, or a ceiling
+      const u = groundP.u; gl.useProgram(groundP.p); camera(u); gl.uniform1f(u.u_height, height); gl.uniform1f(u.u_up, up); gl.uniform1f(u.u_level, level || 0);
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D_ARRAY, groundT); gl.uniform1i(u.u_tex, 0); bind(1, cellsT, u.u_cells); gl.bindVertexArray(groundV); gl.drawArrays(gl.TRIANGLES, 0, 6); this.stats.draws++;
     },
     front(on) { gl.depthRange(0, on ? 0.1 : 1); },                   // what follows is drawn in front of everything else: the weapon in hand never pokes into a wall
@@ -263,7 +263,7 @@ void main() {
       for (let i = 0; i < no; i++) oc.set(o.bodies[i], i * 4);
       gl.useProgram(lightP.p); camera(u); bind(0, gA, u.u_a); bind(1, gN, u.u_n); bind(2, gD, u.u_d); bind(3, lmT, u.u_lm); bind(4, cellsT, u.u_cells); bind(5, prev, u.u_prev); bind(6, thingsT, u.u_things);
       gl.uniform4fv(u.u_lp, lp); gl.uniform4fv(u.u_lc, lc); gl.uniform4fv(u.u_occ, oc); gl.uniform1i(u.u_nl, nl); gl.uniform1i(u.u_no, no);
-      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform3f(u.u_view, eye.pitch || 0, jit[0], jit[1]); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0);
+      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform3f(u.u_view, eye.pitch || 0, jit[0], jit[1]); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0); gl.uniform1f(u.u_dim, o.dim == null ? 1 : o.dim);
       full();
       if (o.smokeCount) {                                            // smoke sits in front of the lit scene and fades against it
         const s = smokeP.u; gl.useProgram(smokeP.p); camera(s); bind(2, gD, s.u_d); gl.uniform2f(s.u_size, W, H); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
