@@ -236,6 +236,77 @@ def('boat', 10, 40, 6, (x, y, z) => {                                           
 }, 'paris');
 def('bollard', 3, 3, 5, (x, y, z) => z === 4 ? 0xd8cfb8 : 0xb9b2a4, 'paris');
 
+// more Paris landmarks; every front faces +y
+def('sacrecoeur', 30, 36, 38, (x, y, z) => {
+  const WH = 0xf2efe6, SH = 0xdcd8cc, ax = Math.abs(x - 14.5), d = Math.hypot(x - 14.5, y - 16.5);
+  if (z < 12) {
+    if (x < 3 || x > 26 || y > 33) return y >= 34 && ax < 9 && z < 9 && x % 3 === 0 ? WH : y >= 34 && ax < 10 && z >= 9 ? SH : null; // portico
+    return z === 11 || z === 0 ? SH : (x === 3 || x === 26 || y === 0 || y === 33) && z > 3 && z < 9 && (x + y) % 4 < 2 ? 0x4d6072 : WH;
+  }
+  if (z < 19 ? d < 7 : z < 33 ? d < 7 * Math.sqrt(1 - Math.pow((z - 19) / 14, 2)) : z < 37 && d < 1.6) return z < 19 && z % 2 ? SH : WH;       // great dome
+  for (const [a, b] of [[7, 6], [22, 6], [7, 27], [22, 27]]) { const e = Math.hypot(x - a, y - b); if (z < 16 ? e < 3 : z < 22 && e < 3 * Math.sqrt(1 - Math.pow((z - 16) / 6, 2))) return z < 16 ? SH : WH; }
+  return ax < 3 && y < 5 && z < 30 ? (z >= 22 && z < 27 && (x + y) % 2 ? 0x4d6072 : WH) : null;                                                  // bell tower
+}, 'paris');
+def('pantheon', 28, 40, 36, (x, y, z) => {
+  const S = 0xe2d9c2, S2 = 0xcfc5a8, ax = Math.abs(x - 13.5), d = Math.hypot(x - 13.5, y - 15.5);
+  if (z < 12) {
+    if (y < 32) return ax < 12 ? (z === 11 ? S2 : S) : null;
+    if (z < 10) return (y === 38 || y === 34) && ax < 11 && (x % 4 === 1 || x % 4 === 2) ? S : z === 0 && ax < 12 ? S2 : null;                    // columns
+    return ax < 12 ? S2 : null;
+  }
+  if (z < 15 && y >= 32) return ax < 12 - (z - 12) * 4 ? S : null;                                                                                // pediment
+  if (z < 21) return d < 7 ? (d > 5.6 && ((Math.atan2(y - 15.5, x - 13.5) * 5 + 20 | 0) & 1) ? 0x6f6a5e : S) : null;
+  if (z < 30) return d < 7 * Math.sqrt(1 - Math.pow((z - 21) / 9, 2)) ? ((z & 1) ? 0x8f9aa3 : 0x7f8a93) : null;
+  return z < 34 && d < 1.6 ? S : null;
+}, 'paris');
+def('invalides', 32, 32, 42, (x, y, z) => {
+  const S = 0xe2d9c2, d = Math.hypot(x - 15.5, y - 15.5), ang = Math.atan2(y - 15.5, x - 15.5);
+  if (z < 11) {
+    if (x < 2 || x > 29 || y < 2) return null;
+    if (y > 29) return z < 9 && x > 8 && x < 23 && x % 3 === 0 ? S : z >= 9 && x > 7 && x < 24 ? 0xcfc5a8 : null;
+    return z === 10 ? 0x6b7884 : (x === 2 || x === 29 || y === 2 || y === 29) && z % 4 > 1 && (x + y) % 3 === 0 ? 0x4d6072 : S;
+  }
+  if (z < 21) return d < 8 ? (d > 6.8 && z > 13 && z < 19 && ((ang * 6 + 30 | 0) & 1) ? 0x4d6072 : S) : null;
+  if (z < 33) return d < 8 * Math.sqrt(1 - Math.pow((z - 21) / 12, 2)) ? (((ang * 4 + 20 | 0) & 1) ? 0xe0bb45 : 0xb8922a) : null;                  // the gilded dome
+  return z < 37 ? (d < 1.9 ? 0xe0bb45 : null) : d < 0.9 ? 0xb8922a : null;
+}, 'paris');
+def('obelisk', 7, 7, 28, (x, y, z) => {
+  const m = Math.max(Math.abs(x - 3), Math.abs(y - 3));
+  if (z < 3) return z < 2 || m < 3 ? 0xcfc5a8 : null;
+  if (z < 25) return m <= 2.4 - (z - 3) * 0.05 ? (noise3(x, y, z) > .7 ? 0xb89478 : 0xc9a58a) : null;
+  return m <= (27 - z) * 0.6 ? 0xe0bb45 : null;
+}, 'paris');
+def('moulin', 24, 22, 26, (x, y, z) => {                                                // red windmill over a cabaret
+  const dx = x - 12, dz = z - 15, R = 0xc8343c, d = Math.hypot(x - 12, y - 10);
+  if (y === 16 && z >= 6 && Math.max(Math.abs(dx), Math.abs(dz)) <= 9 && Math.abs(Math.abs(dx) - Math.abs(dz)) <= 1) return (Math.abs(dx) & 1) ? 0xf4f1e6 : R; // sails
+  if (z < 8) return x >= 2 && x <= 21 && y >= 3 && y <= 15 ? (z === 7 ? 0x7a1f26 : y === 15 && z > 1 && z < 6 && x % 4 < 2 ? 0xffd257 : R) : null;
+  if (z < 17) return d < 4.5 ? (z === 12 ? 0xf4f1e6 : R) : null;
+  return z < 20 && d < 4.5 - (z - 17) * 1.4 ? 0x7a1f26 : null;
+}, 'paris');
+def('montparnasse', 22, 14, 72, (x, y, z) => {
+  if (z >= 70) return x > 2 && x < 19 && y > 2 && y < 11 ? 0x2a2e36 : null;
+  if (!(x === 0 || x === 21 || y === 0 || y === 13) && z < 69) return null;
+  return z % 4 === 0 ? 0x565c68 : (x + y) % 3 === 0 ? 0x2f3540 : 0x3a4250;
+}, 'paris');
+def('pompidou', 40, 22, 16, (x, y, z) => {                                              // inside-out building: pipes and escalator on the facades
+  if (z === 15) return x % 10 < 2 ? 0x3d7dd8 : y % 8 < 2 ? 0x3f9a5b : 0xc8ccd0;
+  if (!(x === 0 || x === 39 || y === 0 || y === 21)) return z === 0 ? 0x8a8478 : null;
+  if (y === 21 && Math.abs(z - (1.5 + x * 0.32)) < 1.1) return 0xd8363e;
+  if (y === 0) return x % 6 < 2 ? 0x3d7dd8 : x % 6 < 4 ? 0x3f9a5b : 0xffd257;
+  return x % 8 === 0 || z % 5 === 4 ? 0xf4f1e6 : 0xa9cbd6;
+}, 'paris');
+def('opera', 34, 30, 24, (x, y, z) => {
+  const S = 0xe2d9c2, G = 0xe0bb45, CU = 0x6fae9a, ax = Math.abs(x - 16.5), d = Math.hypot(x - 16.5, y - 19.5);
+  if (y < 10) return ax > 13 ? null : z < 18 ? (z === 17 ? 0xcfc5a8 : S) : z < 23 && ax < 13 - (z - 18) * 2.6 ? CU : null;                          // stage house
+  if (z < 12) return ax > 15.5 ? null : y === 29 && z < 7 && x % 4 < 2 && ax < 14 ? 0x3a2f28 : z === 7 || z === 11 ? 0xcfc5a8 : S;                  // arcaded front
+  if (z < 14 && y >= 27 && Math.abs(ax - 13) < 1.2) return G;                                                                                       // gilded statues
+  return z < 20 ? (d < 9 * Math.sqrt(1 - Math.pow((z - 12) / 8.5, 2)) ? CU : null) : z < 22 && d < 1.2 ? G : null;                                 // copper dome
+}, 'paris');
+const LANDMARKS = [['sacrecoeur', 560, 92, 0], ['moulin', 420, 104, 0], ['opera', 800, 108, 0], ['obelisk', 372, 345, 0], ['pompidou', 858, 400, 0],
+  ['pantheon', 822, 700, Math.PI], ['invalides', 400, 722, Math.PI], ['montparnasse', 560, 1012, Math.PI]];
+// things a car knocks over instead of stopping at
+const BREAKABLE = new Set(['tree', 'pine', 'plane', 'bush', 'lamp', 'post', 'bollard', 'column', 'tires', 'crate', 'bale']);
+
 // ---------- world definitions ----------
 const WORLD = 1100, MID = WORLD / 2, STEP = 4, ROAD_HALF = 20;
 // countryside
@@ -314,7 +385,7 @@ const WORLD_DEFS = {
   paris: {
     name: 'Paris', bg: '#8f8a80', base: '#c9c2b2',
     points: [[120, 440], [146, 300], [175, 150], [270, 130], [322, 210], [460, 250], [620, 222], [800, 232], [950, 290], [985, 430], [960, 640], [905, 820], [760, 930], [560, 900], [400, 830], [250, 830], [130, 830], [72, 730], [92, 600]],
-    pickable: ['car', 'taxi', 'eiffel', 'arc', 'notredame', 'pyramid', 'haus', 'hausb', 'plane', 'fountain', 'boat'],
+    pickable: ['car', 'taxi', 'eiffel', 'arc', 'notredame', 'sacrecoeur', 'invalides', 'pantheon', 'opera', 'pompidou', 'moulin', 'montparnasse', 'obelisk', 'pyramid', 'haus', 'plane', 'boat'],
     road: { verge: '#ddd6c6', vergeW: 70, kerbs: false, asphalt: '#474a54', bridge: ['#b5ae9f', '#aaa394'], bridgeW: 58, bridgeOver: false, zebra: true },
     water: (x, y, m = 0) => Math.abs(y - seineY(x)) < 40 + m && !onIsle(x, y, -m),
     ground(g, r) {
@@ -334,6 +405,11 @@ const WORLD_DEFS = {
       g.fillStyle = '#e3dccb'; g.fillRect(...PLAZA); g.strokeStyle = '#cfc7b3'; g.lineWidth = 1;
       for (let k = 0; k <= PLAZA[2]; k += 12) { g.beginPath(); g.moveTo(PLAZA[0] + k, PLAZA[1]); g.lineTo(PLAZA[0] + k, PLAZA[1] + PLAZA[3]); g.stroke(); }
       g.fillStyle = '#b9b2a4'; g.fillRect(EIFFEL.x - 60, EIFFEL.y - 60, 120, 120);
+      for (const [k, x, y] of LANDMARKS) {                                                 // a paved square under each landmark
+        const m = MODEL_DEFS[k], w = m.W + 22, h = m.L + 22;
+        g.fillStyle = '#a7a39b'; g.fillRect(x - w / 2 - 2, y - h / 2 - 2, w + 4, h + 4); g.fillStyle = k === 'obelisk' ? '#e3dccb' : '#ddd6c6';
+        if (k === 'obelisk') { g.beginPath(); g.arc(x, y, 34, 0, 7); g.fill(); } else g.fillRect(x - w / 2, y - h / 2, w, h);
+      }
       const seine = (w, c) => { g.strokeStyle = c; g.lineWidth = w; g.beginPath(); for (let x = -10; x <= WORLD + 10; x += 6) g.lineTo(x, seineY(x)); g.stroke(); };
       seine(100, '#9d978c'); seine(80, '#3f8793'); seine(52, '#468f9b');
       for (let i = 0; i < 700; i++) { const x = r() * WORLD, y = seineY(x) + (r() - .5) * 70; g.fillStyle = '#7fbcc4'; g.fillRect(x | 0, y | 0, 3, 1); }
@@ -349,6 +425,8 @@ const WORLD_DEFS = {
       put('eiffel', E.x, E.y, eh, { ghost: true, rad: 0 });
       for (const [a, b] of [[-38, -38], [38, -38], [-38, 38], [38, 38]]) blocks.push({ x: E.x + a * Math.cos(eh) - b * Math.sin(eh), y: E.y + a * Math.sin(eh) + b * Math.cos(eh), rad: 13 });
       put('arc', ETOILE.x, ETOILE.y, Math.PI / 2 + 0.15, { rad: 17 });
+      for (const [k, x, y, rot] of LANDMARKS) put(k, x, y, rot, { rad: Math.max(MODEL_DEFS[k].W, MODEL_DEFS[k].L) / 2 + (k === 'obelisk' ? 26 : 5) });
+      for (const s of [-1, 1]) put('fountain', LANDMARKS[3][1] + s * 22, LANDMARKS[3][2] + 14, 0, { rad: 9 });
       put('pyramid', PLAZA[0] + 60, PLAZA[1] + 58, 0, { rad: 17 });
       put('notredame', ISLE.x + 14, ISLE.y, Math.PI / 2, { rad: 14 });
       put('fountain', PARKS[1][0] + 100, PARKS[1][1] + 70, 0, { rad: 9 }); put('fountain', PARKS[2][0] + 90, PARKS[2][1] + 55, 0, { rad: 9 });
@@ -444,7 +522,7 @@ function makeGround() {
 function makeWorld(MODELS) {
   const objects = [], blocks = [], r = mulberry32(11), n = TRACK.length;
   const clear = (x, y, rad) => !objects.some(o => !o.ghost && Math.hypot(o.x - x, o.y - y) < o.rad + rad);
-  const put = (kind, x, y, rot, extra) => { const m = MODELS[kind], o = { m, x, y, rot, rad: Math.max(m.W, m.L) * 0.5, ...extra }; objects.push(o); return o; };
+  const put = (kind, x, y, rot, extra) => { const m = MODELS[kind], o = { m, x, y, rot, rad: Math.max(m.W, m.L) * 0.5, breakable: BREAKABLE.has(kind), ...extra }; objects.push(o); return o; };
   const beside = (i, off) => { const p = TRACK[(i + n) % n]; return { x: p.x - p.ty * off, y: p.y + p.tx * off, facing: Math.atan2(-p.tx * Math.sign(off), p.ty * Math.sign(off)) - Math.PI / 2 }; };
   const head = i => Math.atan2(TRACK[i].ty, TRACK[i].tx);
   DEF.populate({ put, clear, beside, head, r, n, blocks });
@@ -459,7 +537,8 @@ function makeWorld(MODELS) {
 const FP = { eye: 9, focal: 274, near: 2, far: 620, fog0: 160, fog: [207, 230, 242], sky: '#cfe6f2' };
 
 // ---------- getting in and out ----------
-const solidAt = (world, x, y, pad, skip) => world.objects.some(o => o !== skip && !o.ghost && Math.hypot(o.x - x, o.y - y) < o.rad * 0.8 + pad) || world.blocks.some(b => Math.hypot(b.x - x, b.y - y) < b.rad + pad);
+const touches = (o, x, y, pad) => Math.hypot(o.x - x, o.y - y) < o.rad * 0.8 + pad;
+const solidAt = (world, x, y, pad, skip, hardOnly) => world.objects.some(o => o !== skip && !o.ghost && !(hardOnly && o.breakable) && touches(o, x, y, pad)) || world.blocks.some(b => Math.hypot(b.x - x, b.y - y) < b.rad + pad);
 const nearestCar = world => world.foot && world.objects.filter(o => o.car).map(o => [Math.hypot(o.x - world.foot.x, o.y - world.foot.y), o]).filter(e => e[0] < 30).sort((a, b) => a[0] - b[0]).map(e => e[1])[0];
 function act(world) {
   if (!world.foot) {                                               // step out of the driver's door (or the other side if that is blocked)
@@ -487,7 +566,7 @@ function bindInput(scene, cam, world) {
   addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
   let drag = null;
   scene.addEventListener('pointerdown', e => { drag = e.clientX; scene.setPointerCapture(e.pointerId); });
-  scene.addEventListener('pointermove', e => { if (drag == null) return; const d = e.clientX - drag; drag = e.clientX; if (world.foot) world.foot.yaw -= d * 0.007; else cam.a += d * 0.01; });
+  scene.addEventListener('pointermove', e => { if (drag == null) return; const d = e.clientX - drag; drag = e.clientX; if (world.foot) world.foot.yaw += d * 0.007; else cam.a += d * 0.01; /* on foot: drag right to look right */ });
   ['pointerup', 'pointercancel'].forEach(t => scene.addEventListener(t, () => drag = null));
   // on-screen pad (touch): each button just holds down the matching key
   document.querySelectorAll('#pad button').forEach(b => {
@@ -553,8 +632,30 @@ function updateWorld(dt, world, cam, opt) {
     }
     c.vel *= Math.pow(driving ? (onRoad ? 0.35 : 0.07) : 0.05, dt);
     const nx = c.x + Math.cos(c.heading) * c.vel * dt, ny = c.y + Math.sin(c.heading) * c.vel * dt;
-    if (solidAt(world, nx, ny, 7, c) || nx < 10 || ny < 10 || nx > WORLD - 10 || ny > WORLD - 10) c.vel *= -0.3;
-    else { c.x = nx; c.y = ny; }
+    for (const o of objects) {                                      // trees, poles and other small things get flattened and only cost some speed
+      if (!o.breakable || o.ghost || !touches(o, nx, ny, 7)) continue;
+      const dir = Math.sign(c.vel) || 1;
+      o.fall = { dx: Math.cos(c.heading) * dir, dy: Math.sin(c.heading) * dir, t: 0, a: 0 }; o.ghost = true;
+      c.vel *= o.m.W >= 10 ? 0.8 : 0.93;
+    }
+    const inside = (x, y) => x > 10 && y > 10 && x < WORLD - 10 && y < WORLD - 10, free = (x, y) => inside(x, y) && !solidAt(world, x, y, 7, c, true);
+    if (free(nx, ny)) { c.x = nx; c.y = ny; continue; }
+    // Something solid: glance off it. Drop the part of the velocity that points into the obstacle and steer along
+    // what is left, so the car slides round buildings instead of stopping dead.
+    const h = objects.find(o => o !== c && !o.ghost && !o.breakable && touches(o, nx, ny, 7)) || world.blocks.find(b => Math.hypot(b.x - nx, b.y - ny) < b.rad + 7);
+    let ax = h ? c.x - h.x : (nx <= 10 ? 1 : nx >= WORLD - 10 ? -1 : 0), ay = h ? c.y - h.y : (ny <= 10 ? 1 : ny >= WORLD - 10 ? -1 : 0);
+    const al = Math.hypot(ax, ay) || 1; ax /= al; ay /= al;
+    const dir = Math.sign(c.vel) || 1, speed = Math.abs(c.vel), vx = Math.cos(c.heading) * dir, vy = Math.sin(c.heading) * dir, into = Math.min(0, vx * ax + vy * ay);
+    let tx = vx - into * ax, ty = vy - into * ay, along = Math.hypot(tx, ty);
+    if (along < 0.35) { const side = -ay * vx + ax * vy >= 0 ? 1 : -1; tx = -ay * side; ty = ax * side; along = 0.35; }   // head-on: peel off to one side
+    c.heading = Math.atan2(ty * dir, tx * dir); c.vel = dir * speed * Math.max(0.35, along * 0.9);
+    if (free(c.x + ax * 1.5, c.y + ay * 1.5)) { c.x += ax * 1.5; c.y += ay * 1.5; }
+  }
+  const px = foot ? foot.x : player.x, py = foot ? foot.y : player.y;
+  for (const o of objects) {                                        // knocked-over things tip to the ground, and grow back once you are far away
+    if (!o.fall) continue;
+    o.fall.t += dt; o.fall.a = 1.45 * Math.min(1, Math.pow(o.fall.t / 0.45, 2));
+    if (o.fall.t > 25 && Math.hypot(o.x - px, o.y - py) > 260) { o.fall = null; o.ghost = false; }
   }
   for (const o of objects) if (o.car) o.rot = o.heading - Math.PI / 2;  // car sprites face +y
   const tx = foot ? foot.x : player.x, ty = foot ? foot.y : player.y;

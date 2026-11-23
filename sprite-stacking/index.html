@@ -22,7 +22,7 @@
         <div><button data-k="s" aria-label="Brake / reverse">&#9660;</button><button data-k="w" aria-label="Accelerate">&#9650;</button></div>
       </div>
       <p class="hint"><span class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / arrows drive &middot;
-        <kbd>Q</kbd><kbd>E</kbd> or drag to orbit the camera &middot;</span> Drag the scene sideways to orbit (or to look around on foot) &middot; the car self-drives until you take over &middot;
+        <kbd>Q</kbd><kbd>E</kbd> or drag to orbit the camera &middot;</span> Drag the scene sideways to orbit (or to look around on foot) &middot; the car self-drives until you take over, flattens trees and poles, and scrapes along walls &middot;
         <b>Get out</b> (or <kbd>F</kbd>) to walk in first person, then walk up to any car and <b>Get in</b>.
         <span id="stats"></span></p>
     </section>
@@ -82,11 +82,13 @@ for (const d of Object.values(MODEL_DEFS)) MODELS[d.name] = makeModel(d.name, d.
 function drawStack(ctx, m, x, y, rot, o) {
   const squash = Math.sin(o.pitch), lift = Math.cos(o.pitch) * o.spacing * o.scale;
   const slices = o.shade ? m.shaded : m.flat;
-  const sub = o.fill ? Math.min(6, Math.max(1, Math.ceil(lift))) : 1;   // repeat each slice to plug gaps between layers
+  // o.lean = [x px, y px, height factor] per layer: a knocked-over stack slides its layers sideways as it drops
+  const [lx, ly, lk] = o.lean || [0, 0, 1];
+  const sub = o.fill ? Math.min(6, Math.max(1, Math.ceil(Math.max(lift, Math.hypot(lx, ly))))) : 1;   // repeat each slice to plug gaps between layers
   let draws = 0;
   for (let i = 0; i < m.H; i++) for (let s = 0; s < sub; s++) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.translate(Math.round(x), Math.round(y - (i + s / sub) * lift));
+    ctx.translate(Math.round(x + (i + s / sub) * lx), Math.round(y - (i + s / sub) * (lift * lk - ly)));
     ctx.scale(o.scale, o.scale * squash);
     ctx.rotate(rot);
     ctx.drawImage(slices[i], -m.W / 2, -m.L / 2);
@@ -152,7 +154,10 @@ function renderTop() {
   }
   sctx.globalAlpha = 1;
   let draws = 0;
-  for (const v of vis) draws += drawStack(sctx, v.o.m, v.sx, v.sy, v.o.rot - cam.a, o2);
+  for (const v of vis) {
+    const f = v.o.fall, k = f ? Math.sin(f.a) * opt.spacing : 0;     // fall direction, turned into screen space
+    draws += drawStack(sctx, v.o.m, v.sx, v.sy, v.o.rot - cam.a, f ? { ...o2, lean: [(f.dx * c - f.dy * s) * k, (f.dx * s + f.dy * c) * squash * k, Math.cos(f.a)] } : o2);
+  }
   $('stats').textContent = ` ${vis.length} stacks, ${draws} drawImage calls/frame.`;
 }
 
@@ -195,7 +200,8 @@ function renderFP() {
   for (const v of list) {
     sctx.globalAlpha = 1 - Math.min(1, Math.max(0, (v.f - FP.fog0) / (FP.far - FP.fog0)));
     draws += drawStack(sctx, v.o.m, v.sx, hz + FP.eye * v.s, v.o.rot - ft.yaw - Math.PI / 2,
-      { pitch: Math.max(0.07, Math.atan2(FP.eye, v.f)), spacing: opt.spacing, scale: v.s, fill: opt.fill, shade: opt.shade });
+      { pitch: Math.max(0.07, Math.atan2(FP.eye, v.f)), spacing: opt.spacing, scale: v.s, fill: opt.fill, shade: opt.shade,
+        lean: v.o.fall ? [(-v.o.fall.dx * fy + v.o.fall.dy * fx) * Math.sin(v.o.fall.a) * v.s * opt.spacing, 0, Math.cos(v.o.fall.a)] : null });
   }
   sctx.globalAlpha = 1;
   $('stats').textContent = ` On foot: ${list.length} billboards, ${draws} drawImage calls/frame.`;
