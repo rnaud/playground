@@ -76,7 +76,7 @@ void main() {
   const FULL = `out vec2 v; void main() { v = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2)); gl_Position = vec4(v * 2.0 - 1.0, 0.0, 1.0); }`;
   const lightP = prog(FULL, `in vec2 v; out vec4 o;
 uniform sampler2D u_a, u_n, u_d, u_lm, u_fm, u_cells, u_prev, u_things; uniform vec3 u_lb[${MAXL}]; uniform vec4 u_eye, u_proj, u_fog; uniform vec3 u_view; uniform float u_world, u_far, u_sky, u_time, u_fast, u_dim; uniform vec2 u_grid;
-uniform vec4 u_lp[${MAXL}], u_lc[${MAXL}], u_occ[${MAXO}]; uniform int u_nl, u_no;
+uniform vec4 u_lp[${MAXL}], u_lc[${MAXL}], u_occ[${MAXO}]; uniform int u_nl, u_no; uniform vec4 u_mist; uniform vec3 u_mistc, u_kind[12]; uniform vec2 u_px;
 float fwdOf(float z) { if (z < 0.1) z *= 10.0;                       // the weapon in hand is drawn into the front tenth of the depth range
   float A = (u_proj.w + u_proj.z) / (u_proj.w - u_proj.z), B = 2.0 * u_proj.w * u_proj.z / (u_proj.w - u_proj.z); return B / (A - (z * 2.0 - 1.0)); }
 vec3 worldAt(vec2 uv, float f) { vec2 ndc = uv * 2.0 - 1.0 - u_view.yz; float c = cos(u_eye.z), s = sin(u_eye.z); return vec3(u_eye.xy + f * vec2(c, s) + ndc.x * f / u_proj.x * vec2(-s, c), u_eye.w + (ndc.y / u_proj.y + u_view.x) * f); }
@@ -111,9 +111,15 @@ vec3 skyAt(vec2 uv) {                                                 // dusk ov
   if (tower > 0.5) return mix(vec3(0.09, 0.07, 0.15), vec3(1.0, 0.75, 0.4), step(0.94, hash(floor(vec2(az * 400.0, e * 90.0)))) * 0.8);
   return sky;
 }
+vec3 edged(vec3 c, float z, float a) {                               // a machine is drawn round in its own colour: any pixel that is not machine but has machine beside and in front of it
+  if (a > 0.043 && a < 0.143) return c; float f = z >= 1.0 ? 1e9 : fwdOf(z);
+  for (int i = 0; i < 4; i++) { vec2 uv = v + vec2(i < 2 ? (i == 0 ? 1.0 : -1.0) : 0.0, i < 2 ? 0.0 : (i == 2 ? 1.0 : -1.0)) * u_px * 1.6; float m = texture(u_a, uv).a;
+    if (m > 0.043 && m < 0.143 && fwdOf(texture(u_d, uv).r) < f - 1.0) return mix(c, u_kind[int(clamp(floor((m * 255.0 - 11.0) / 2.0), 0.0, 11.0))], 0.88); }
+  return c;
+}
 void main() {
   float z = texture(u_d, v).r; vec3 O = vec3(u_eye.xy, u_eye.w);
-  if (z >= 1.0) { o = vec4(mix(vec3(0.03, 0.028, 0.04), skyAt(v), u_sky), 1.0); return; }
+  if (z >= 1.0) { o = vec4(edged(mix(vec3(0.03, 0.028, 0.04), skyAt(v), u_sky), z, 0.0), 1.0); return; }
   float f = fwdOf(z); vec3 P = worldAt(v, f); vec4 A = texture(u_a, v), N = texture(u_n, v); vec3 n = normalize(N.xyz * 2.0 - 1.0), V = normalize(O - P);
   float occ = 0.0, rot = hash(v * 931.0 + u_time) * 6.283;                     // ambient occlusion from the neighbouring pixels' positions
   for (int i = 0; i < 8; i++) { float a = rot + float(i) * 0.785, r = (0.35 + 0.65 * fract(float(i) * 0.618)) * 2.2; vec2 uv = v + vec2(cos(a) * u_proj.x, sin(a) * u_proj.y) * r / f * 0.5;
@@ -145,8 +151,11 @@ void main() {
     c += texture(u_prev, huv).rgb * hit * N.a * (0.12 + 0.6 * pow(1.0 - max(dot(V, n), 0.0), 3.0)) * smoothstep(0.0, 0.08, edge);
   }
   c = mix(c, A.rgb * 2.4, A.a);                                        // glowing voxels ignore the light and feed the bloom
-  c = mix(c, u_fog.rgb, clamp((T - u_fog.a) / (u_far - u_fog.a), 0.0, 1.0) * 0.85) + glow;
-  o = vec4(c, 1.0);
+  c = mix(c, u_fog.rgb, clamp((T - u_fog.a) / (u_far - u_fog.a), 0.0, 1.0) * 0.85);
+  { float zo = max(O.z - u_mist.z, -3.0), zp = max(P.z - u_mist.z, -3.0), dz = zp - zo, eo = exp(-u_mist.y * zo);     // mist lying on the floor: thick at your feet, gone by head height, and lit by whatever lamps stand in it
+    float od = u_mist.x * T * (abs(dz) < 0.05 ? eo : (eo - exp(-u_mist.y * zp)) / (u_mist.y * dz));
+    c = mix(c, u_mistc * (0.1 + u_mist.w * (amb + max(farl, 0.0) * 0.5 + diff * 0.25)), 1.0 - exp(-od)); }
+  o = vec4(edged(c + glow, z, A.a), 1.0);
 }`);
   const smokeP = prog(CAM + `layout(location = 0) in vec2 a_q; layout(location = 1) in vec4 i_p; layout(location = 2) in vec4 i_c; out vec2 v_q; out vec4 v_c; out float v_f;
 void main() { float c = cos(u_eye.z), s = sin(u_eye.z); vec4 p = project(i_p.xyz + vec3(-s, c, 0.0) * a_q.x * i_p.w + vec3(0.0, 0.0, a_q.y * i_p.w)); gl_Position = p; v_f = p.w; v_q = a_q; v_c = i_c; }`,
@@ -163,9 +172,12 @@ void main() {
   vec3 c = texture(u_tex, v).rgb + texture(u_b0, v).rgb * 0.5 + texture(u_b1, v).rgb * 0.5 + texture(u_b2, v).rgb * 0.45 + texture(u_b3, v).rgb * 0.4;
   c *= texture(u_exp, vec2(0.5)).r;
   c = mix(c, 0.8 + (1.0 - exp(-(c - 0.8) * 2.2)) * 0.22, step(0.8, c));   // roll the highlights off instead of clipping them
+  float lum = dot(c, vec3(0.3, 0.59, 0.11));
+  c = mix(c * vec3(0.82, 0.98, 1.16), c * vec3(1.08, 1.0, 0.9), smoothstep(0.06, 0.55, lum));   // cold in the shadows, warm in the light
+  c = mix(vec3(lum), c, 1.14);
   c = (c - 0.5) * u_grade.a + 0.5; c *= u_grade.rgb;                     // each part of the level has its own grade
-  vec2 q = v - 0.5; c *= 1.0 - dot(q, q) * 0.6;                         // vignette
-  c += (fract(sin(dot(v * 913.0 + u_time, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * 0.018;
+  vec2 q = v - 0.5; c *= 1.0 - dot(q, q) * 0.9;                         // vignette
+  c += (fract(sin(dot(v * 913.0 + u_time, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * (0.014 + 0.03 * (1.0 - smoothstep(0.0, 0.45, lum)));   // grain, coarser in the dark
   o = vec4(mix(max(c, 0.0), vec3(0.7, 0.0, 0.0), u_pain * dot(q, q) * 2.4), 1.0);
 }`);
   // temporal anti-aliasing: find where each pixel was in the last frame and merge with it, unless what was there is too different
@@ -268,7 +280,7 @@ void main() {
       for (let i = 0; i < no; i++) oc.set(o.bodies[i], i * 4);
       gl.useProgram(lightP.p); camera(u); bind(0, gA, u.u_a); bind(1, gN, u.u_n); bind(2, gD, u.u_d); bind(3, lmT, u.u_lm); bind(4, cellsT, u.u_cells); bind(5, prev, u.u_prev); bind(6, thingsT, u.u_things); bind(7, fmT, u.u_fm); gl.uniform3fv(u.u_lb, lb);
       gl.uniform4fv(u.u_lp, lp); gl.uniform4fv(u.u_lc, lc); gl.uniform4fv(u.u_occ, oc); gl.uniform1i(u.u_nl, nl); gl.uniform1i(u.u_no, no);
-      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform3f(u.u_view, eye.pitch || 0, jit[0], jit[1]); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0); gl.uniform1f(u.u_dim, o.dim == null ? 1 : o.dim);
+      gl.uniform4f(u.u_fog, o.fog[0], o.fog[1], o.fog[2], o.fog[3]); gl.uniform1f(u.u_far, this.far); gl.uniform1f(u.u_world, world); gl.uniform2f(u.u_grid, GW, GH); gl.uniform1f(u.u_sky, o.sky ? 1 : 0); gl.uniform3f(u.u_view, eye.pitch || 0, jit[0], jit[1]); gl.uniform1f(u.u_time, o.time % 10); gl.uniform1f(u.u_fast, this.fast ? 1 : 0); gl.uniform1f(u.u_dim, o.dim == null ? 1 : o.dim); gl.uniform4fv(u.u_mist, o.mist || [0, 1, 0, 0]); gl.uniform3fv(u.u_mistc, o.mistc || [0, 0, 0]); gl.uniform3fv(u.u_kind, o.kinds || new Float32Array(36)); gl.uniform2f(u.u_px, 1 / W, 1 / H);
       full();
       if (o.smokeCount) {                                            // smoke sits in front of the lit scene and fades against it
         const s = smokeP.u; gl.useProgram(smokeP.p); camera(s); bind(2, gD, s.u_d); gl.uniform2f(s.u_size, W, H); gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);

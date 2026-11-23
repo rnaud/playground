@@ -506,6 +506,7 @@ model('a_pool', 28, 28, 1, blot(14, 0x120e0b, 0x3a3128)); model('a_winepool', 30
 { const nade = (x, y, z) => z > 4 ? (x > 0 && x < 3 && y > 0 && y < 3 ? SHINY | 0xb08a3a : null) : Math.hypot(x - 1.5, y - 1.5, z - 2) < 2.6 ? (z === 2 ? 0x2c3620 : 0x3d4a2a) : null;
   model('a_grenade', 4, 4, 6, nade, .3); model('a_grenade_p', 4, 4, 6, nade, .7); }
 // the guard's shield: an enamelled plate with a brass rim and a lit slit to see through
+model('a_hole', 7, 7, 1, (x, y) => Math.hypot(x - 3, y - 3) > 3.2 ? null : Math.hypot(x - 3, y - 3) < 1.6 ? 0x0e0c0b : 0x2a2420);
 model('a_shield', 26, 3, 46, (x, y, z) => z > 31 && z < 35 && x > 6 && x < 19 ? (y === 1 ? GLOW | 0x7fe8ff : null) : x < 2 || x > 23 || z < 2 || z > 43 ? SHINY | 0xb08a3a : x % 8 === 4 && z % 8 === 4 ? SHINY | 0xc9a23a : SHINY | (noise3(x >> 2, z >> 2, 8) > .6 ? 0x26345e : 0x1f2b50)); model('a_scorch', 44, 44, 1, blot(22, 0x0c0a09, 0x1e1a17)); model('a_hole', 2, 2, 2, () => 0x0e0c0b, .3);
 for (const n of ['a_shot', 'a_spark', 'a_shell', 'a_bolt']) { const d = MODEL_DEFS[n], f = d.fn; d.fn = (x, y, z) => { const c = f(x, y, z); return c == null ? null : c | GLOW; }; }   // shots make their own light
 // weapons are relief cards cut from the first-person sheet: always seen from behind, exactly as drawn
@@ -643,6 +644,7 @@ const ENEMY = {
 // colour marks its name under the crosshair.
 const KIND = { automate: { name: 'AUTOMATE', col: '#d9b24a' }, lanterne: { name: 'LANTERNE', col: '#ff8a3a' }, scaphandre: { name: 'SCAPHANDRIER', col: '#58c08a', tint: [.72, 1.2, .8] },
   sauteur: { name: 'SAUTEUR', col: '#ff4a4a', tint: [1.3, .6, .55] }, garde: { name: 'GARDE', col: '#5fa8ff', tint: [.62, .84, 1.35] }, colosse: { name: 'LE COLOSSE', col: '#c8c8d8', tint: [.8, .8, .95] } };
+const KINDS = Object.keys(KIND), kindCols = time => { const out = new Float32Array(36), p = .75 + .25 * Math.sin(time * 26); KINDS.forEach((k, i) => { const c = hex3(KIND[k].col); out.set(c, i * 3); out.set(c.map(v => (v * .4 + .75) * p * 1.5), (i + 6) * 3); }); return out; };   // each kind's outline, and the brighter, beating one it wears while it charges a shot
 const tintOf = name => { const k = KIND[name.slice(0, name.indexOf('_'))]; return k && k.tint; };
 const WEAPONS = [
   { name: 'PISTOLET', model: 'w_pistol', gun: 'v_pistol', ammo: 'bullets', rate: .30, dmg: 13, pellets: 1, spread: .012, off: [13, 4.3, -1.55] },
@@ -803,7 +805,10 @@ function sfx(kind, at) {
   if (d > 420) return;
   snd.play(kind, { vol: 1 / (1 + (d / 70) ** 2), pan: Math.sin(Math.atan2(dy, dx) - P.yaw) * Math.min(1, d / 30) * .85, muffle: Math.min(.85, d / 500 + (canSee(P.x, P.y, at.x, at.y) ? 0 : .5)) });
 }
-const GRADE = { metro: [1, 1.01, 1.04, 1.08], catacombs: [1.06, .98, .88, 1.14], cellar: [1.08, .97, .88, 1.1], chateau: [1.05, 1, .92, 1.04], courtyard: [.96, .98, 1.1, 1.08], workshop: [.94, 1, 1.08, 1.12] }, grade = [1, 1, 1, 1];
+const GRADE = { metro: [.97, 1.02, 1.08, 1.1], catacombs: [1.1, .96, .8, 1.2], cellar: [1.12, .93, .8, 1.16], chateau: [1.08, 1, .87, 1.06], courtyard: [.9, .97, 1.17, 1.12], workshop: [.9, 1.05, 1.02, 1.18] }, grade = [1, 1, 1, 1];
+// The mist that lies in each place: how thick, how fast it thins with height, how much it takes the lamps' light, and its colour.
+const MIST = { metro: [.0035, .2, .9, .8, .86, 1], catacombs: [.011, .13, 1.1, 1, .74, .5], cellar: [.01, .13, 1.1, 1, .62, .46], chateau: [.0025, .12, .9, 1, .86, .62], courtyard: [.007, .16, .8, .5, .62, .95], workshop: [.007, .12, 1, .6, .92, .8] }, mist = [0, .15, 1, 1, 1, 1, 0];
+const hex3 = h => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
 const ROOM_OF = { z: 'courtyard', m: 'metro', r: 'metro', c: 'catacombs', b: 'cellar', w: 'chateau', k: 'chateau', g: 'courtyard', o: 'courtyard', i: 'workshop' };
 const STEP_ON = { z: 'metal', m: 'tile', r: 'stone', c: 'earth', b: 'stone', w: 'wood', k: 'carpet', g: 'grass', o: 'stone', i: 'metal' };
 
@@ -970,6 +975,15 @@ function lob() {                                                               /
 function reload() { const w = WEAPONS[P.weapon]; if (P.reload > 0 || P.dead || P.mag[P.weapon] >= Math.min(MAG[P.weapon], P.ammo[w.ammo])) return; P.reload = RELOAD[P.weapon]; sfx('swap'); }
 const KICK = [1, 1.9, .7, .5], PUNCH = [.022, .075, .012, .006];             // how hard each weapon kicks in the hand, and how far it throws the view up
 const ceilingAt = (x, y) => { const cx = Math.floor(x / CS), cy = Math.floor(y / CS), t = tile(cx, cy); return 'goHz.'.includes(t) ? 1e9 : vaulted(cx, cy) ? 30 : inCellar(cx, cy) ? 21 : t === 'c' ? LOWC : WH; };
+// What a bullet does depends on what it strikes: tile cracks white, brick and stone throw dust, wood splinters, iron sparks and sings.
+const WALL_MAT = { M: 'tile', C: 'stone', K: 'stone', S: 'stone', B: 'brick', W: 'wood', I: 'iron' }, FLOOR_MAT = { metal: 'iron', tile: 'tile', stone: 'stone', earth: 'earth', wood: 'wood', carpet: 'cloth', grass: 'grass' };
+const IMPACT = { tile: [2, 0, 7, [.95, .95, .9], 'tink'], stone: [2, 2, 4, [.62, .58, .5], 'crumble'], brick: [1, 2, 6, [.6, .26, .2], 'crumble'], wood: [0, 1, 7, [.5, .32, .16], 'thud'], iron: [10, 0, 0, [1, 1, 1], 'ric'], earth: [0, 1, 6, [.32, .2, .12], 'thud'], cloth: [0, 0, 6, [.7, .12, .12], 'thud'], grass: [0, 0, 6, [.25, .6, .22], 'thud'] };
+const impactT = {};
+function impact(mat, x, y, z, dir) {
+  const [sp, sm, n, col, snd0] = IMPACT[mat] || IMPACT.stone; if (sp) sparks(x, y, z, sp, dir, mat === 'iron' ? 2.8 : 2); if (sm) smoke(x, y, z, sm); if (n) chips(x, y, z, n, col, dir);
+  if (mat === 'iron') { const a = dir + rand(-.9, .9), v = rand(160, 260); spawn('chip', x, y, z, { k: [.45, 1, .85, .4, 1], vx: Math.cos(a) * v, vy: Math.sin(a) * v, vz: rand(-20, 70), g: 60, life: .22 }); }   // the round itself, glancing away
+  if (!(stats.time - impactT[mat] < .07)) { impactT[mat] = stats.time; sfx(snd0, { x, y }); }
+}
 function fire(alt) {
   const w = WEAPONS[P.weapon];
   if (P.cool > 0 || P.dead || P.reload > 0) return;
@@ -1007,11 +1021,11 @@ function fire(alt) {
     if (w.pierce) for (let d = 10; d < end; d += 9) fx.push({ model: 'a_bolt', x: P.x + dx * d, y: P.y + dy * d, lift: zAt(d) - 2 + Math.random() * 2, vx: 0, vy: 0, vz: 0, t: 0, life: .09, rot: a - Math.PI / 2 });
     else if (end >= reach && ground < wall) {                       // into the floor or the ceiling
       const ix = P.x + dx * (ground - 3), iy = P.y + dy * (ground - 3), iz = gz ? gz - .6 : zAt(ground - 3);
-      if (gz < 1e8) { sparks(ix, iy, iz, 3, a + Math.PI, 3); smoke(ix, iy, iz, 1); }
+      if (gz < 1e8) { const ft = tile(Math.floor(ix / CS), Math.floor(iy / CS)); impact(FLOOR_MAT[STEP_ON[ft]] || 'stone', ix, iy, iz, a + Math.PI); if (!gz) litter('a_hole', ix, iy, .05); }   // and a mark where it went into the floor
     }
     else if (end >= wall) {                                         // the wall is chipped away where the shot lands, and throws out its own rubble
       const ix = P.x + dx * (end - 1.2), iy = P.y + dy * (end - 1.2), iz = Math.min(WH + 12, zAt(end) - 1 + rand(-.6, .6)), hit = panelAt(P.x + dx * end, P.y + dy * end, dx, dy);
-      sparks(ix, iy, iz, 4, a + Math.PI, 2); smoke(ix, iy, iz, 1);
+      { const t = hit ? hit[0].m.name.split('_')[1][0] : 'S'; impact(WALL_MAT[WALL_BASE[t] || t] || 'stone', ix, iy, iz, a + Math.PI); }
       if (hit && /^panel_[FXa]_/.test(hit[0].m.name) && !hit[0].smashed) { hit[0].smashed = true; sfx('glass', { x: ix, y: iy }); chips(ix, iy, iz, 22, [.75, .9, 1, .5], a + Math.PI); chip(hit[0], 64, 130, 16); }   // a window goes
       if (hit && /^panel_G/.test(hit[0].m.name)) { const s = steamers.find(q => Math.hypot(q.x - ix, q.y - iy) < 18 && !(q.cd > stats.time)); if (s) { s.cd = stats.time + 2.5; vent(s, true); } }   // a shot into the pipework lets the steam out
       const k = hit && chip(hit[0], hit[1], (iz - hit[0].lift) * WPU, P.weapon === 3 ? 5 : P.weapon === 1 ? 3 : 3.6);
@@ -1144,6 +1158,9 @@ function update(dt) {
   if ((tagT -= dt) <= 0) { tagT = .08; let best = null, bd = 1e9; const fxv = Math.cos(P.yaw), fyv = Math.sin(P.yaw);     // what the crosshair is on
     for (const e of enemies) { if (e.dead || e.boss) continue; const ex = e.x - P.x, ey = e.y - P.y, f = ex * fxv + ey * fyv; if (f < 4 || f > 300 || f > bd) continue; if (Math.abs(ey * fxv - ex * fyv) < e.r + 2 + f * .02 && canSee(P.x, P.y, e.x, e.y)) { best = e; bd = f; } }
     const el = $('tag'); if (el) { if (best) { const k = KIND[best.type]; el.innerHTML = `<b style="color:${k.col}">${k.name}</b><i><u style="width:${Math.max(0, Math.round(100 * best.hp / best.hp0))}%;background:${k.col}"></u></i>`; } el.style.opacity = best ? 1 : 0; } }
+  { const dy = wrap(P.yaw - (P.lastYaw == null ? P.yaw : P.lastYaw)), dp = P.pitch - (P.lastPitch || 0); P.lastYaw = P.yaw; P.lastPitch = P.pitch;   // the gun trails a little behind a turn of the head and catches up
+    P.lagY = Math.max(-.16, Math.min(.16, ((P.lagY || 0) + dy) * Math.exp(-11 * dt))); P.lagP = Math.max(-.12, Math.min(.12, ((P.lagP || 0) + dp) * Math.exp(-11 * dt)));
+    const side = (P.vy * Math.cos(P.yaw) - P.vx * Math.sin(P.yaw)) / 170; P.lean = (P.lean || 0) + (side - (P.lean || 0)) * Math.min(1, 9 * dt); }
   P.dipT = Math.max(0, P.dipT - dt); P.punch -= P.punch * Math.min(1, 8 * dt); P.hitT = Math.max(0, P.hitT - dt);
   for (let i = P.hits.length - 1; i >= 0; i--) if ((P.hits[i].t -= dt * .9) <= 0) P.hits.splice(i, 1);
   const here = tile(Math.floor(P.x / CS), Math.floor(P.y / CS)), was = P.bob;
@@ -1317,12 +1334,12 @@ function render(now) {
   for (const d of doors) { const name = d.key === 'secret' ? 'a_door_secret_' + (d.floor === 'k' ? 'W' : d.floor.toUpperCase()) : d.key ? 'a_door_' + d.key : 'a_door'; for (const sg of [-1, 1]) { const o = sg * (8 + d.open * 15); draw(name, d.x + (d.vertical ? o : 0), d.y + (d.vertical ? 0 : o), d.vertical ? 0 : Math.PI / 2, d.z); } }   // the two leaves slide apart into the walls
   for (const d of decor) if (d.big) {                                                                       // the airship and its mast are seen from every roof: past the edge of the drawn world they are brought in along the line of sight and shrunk to match
     const ez = FP.eye + P.z, dist = Math.hypot(d.x - P.x, d.y - P.y, d.lift - ez), k = Math.min(1, 440 / dist), def = MODEL_DEFS[d.model];
-    R.tint(1, 1, 1, .22); R.draw(mesh(d.model), M4(P.x + (d.x - P.x) * k, P.y + (d.y - P.y) * k, ez + (d.lift - ez) * k, d.rot), def.o.vox * k); R.tint(); n++; }
+    R.tint(1, 1, 1, .3); R.draw(mesh(d.model), M4(P.x + (d.x - P.x) * k, P.y + (d.y - P.y) * k, ez + (d.lift - ez) * k, d.rot), def.o.vox * k); R.tint(); n++; }
   for (const d of decor) if (!d.gone && !d.big) { if (d.swing && vis(d.x, d.y, 8)) { R.draw(mesh(d.model), M4(d.x, d.y, d.lift, d.rot, Math.sin(time * 1.4 + d.x * .3) * .09, d.swing), VOX); n++; } else draw(d.model, d.x, d.y, d.rot, (d.lift || 0) + (d.z || 0)); }
   for (const it of items) { const k = PICK[it.kind], bob = Math.sin(now * 0.004 + it.x) * 1.2, z = (it.z || 0) + 4 + bob; draw(k.model, it.x, it.y, now * 0.002, z);
     const c = k.glow || [1, .85, .4]; for (let i = 0; i < 4; i++) { const a = now * 0.003 + i * 1.571 + it.x; cube([.5, c[0], c[1], c[2], 1], it.x + Math.cos(a) * 3.4, it.y + Math.sin(a) * 3.4, (it.z || 0) + 1.6 + Math.sin(a * 2) * .8); } }   // four motes circle each thing worth picking up: green for health, blue for armour, gold for ammunition
   for (const e of enemies) if ((!e.dead || e.dying) && vis(e.x, e.y, 14)) {   // a destroyed machine is only wreckage now, unless it is still falling over
-    { const t = KIND[e.type].tint || [1, 1, 1]; R.tint(t[0], t[1], t[2], e.dead ? 0 : .06); }
+    { const t = KIND[e.type].tint || [1, 1, 1], id = KINDS.indexOf(e.type) + (e.wind > 0 || (e.rush && !e.rush.go) ? 6 : 0); R.tint(t[0], t[1], t[2], e.dead ? 0 : (12.3 + 2 * id) / 255); }   // (the little light it carries also tells the renderer which kind it is, for the outline)
     const rot = e.yaw - Math.PI / 2, fl = e.flash > 0 ? 0.8 : 0, lift = e.z + e.hop + (e.fly ? e.fly + Math.sin(e.t * 3) * 1.5 : 0), rig = RIG[e.type];
     const hurt = e.hp < e.hp0 * .34 ? '_d2' : e.hp < e.hp0 * .67 ? '_d1' : '', walk = e.awake && e.moving && !e.dead, rushing = e.rush ? (e.rush.go ? 1 : 1 - e.rush.wind / .95) : e.jump ? 1 : 0;
     const charge = e.wind > 0 ? 1 - e.wind / WIND : 0, lean = (e.atk > 0 ? .1 * e.atk / .22 : 0) + Math.min(.4, e.stun * 1.3) - charge * .1 - rushing * .32 + (e.fly ? Math.sin(e.t * 2.3) * .1 : walk ? -.05 : 0);   // rocked back by its own recoil or by a hit; leaning into its stride
@@ -1353,7 +1370,8 @@ function render(now) {
   for (const d of debris) { const k = PARTICLE[d.model]; if (k) cube(k, d.x, d.y, d.lift); else if (d.tip) { if (vis(d.x, d.y, 14)) { const t = tintOf(d.model); if (t) R.tint(t[0], t[1], t[2]); else R.tint(); R.draw(mesh(d.model), M4(d.x, d.y, d.lift + 1.5, d.rot, d.tip * 1.5, d.base + 1.5), VOX); n++; } } else draw(d.model, d.x, d.y, d.rot, d.lift); }
   R.tint();
   for (const b of brass) cube(PARTICLE[b.model], b.x, b.y, b.lift);
-  for (const s of shots) draw(s.model, s.x, s.y, Math.atan2(s.vy, s.vx) - Math.PI / 2, s.lift);
+  for (const s of shots) { draw(s.model, s.x, s.y, Math.atan2(s.vy, s.vx) - Math.PI / 2, s.lift);
+    const c = s.col || (s.col = hex3(KIND[s.from ? s.from.type : 'lanterne'].col)); for (let i = 1; i <= 6; i++) cube([.62 - i * .08, c[0], c[1], c[2], 1], s.x - s.vx * i * .016, s.y - s.vy * i * .016, s.lift - (s.vz || 0) * i * .016); }   // each shot draws a streak of its maker's colour
   for (const p of fx) {
     const k = p.k || PARTICLE[p.model];
     if (k) cube(k, p.x, p.y, p.lift);
@@ -1361,6 +1379,11 @@ function render(now) {
     else if (p.tip) { if (vis(p.x, p.y, 14)) { R.draw(mesh(p.model), M4(p.x, p.y, p.lift + 1.5, p.a, p.tip * 1.5 * Math.min(1, p.t * 2.5), p.base + 1.5), VOX); n++; } }   // a falling part tips over as it goes
     else draw(p.model, p.x, p.y, p.rot != null ? p.rot : p.a, p.lift);
   }
+  for (let i = 0; i < 70; i++) {                                                                           // dust hanging in the air: it shows only where a lamp catches it
+    const h1 = Math.sin(i * 127.1) * 43758.5453, h2 = Math.sin(i * 311.7) * 43758.5453, h3 = Math.sin(i * 74.7) * 43758.5453, u = h1 - Math.floor(h1), w2 = h2 - Math.floor(h2), q = h3 - Math.floor(h3);
+    const wrap = (v, c) => ((v - c) % 160 + 240) % 160 - 80 + c, x = wrap(u * 160 + Math.sin(time * .21 + i) * 6 + time * 1.4, P.x), y = wrap(w2 * 160 + Math.cos(time * .17 + i * 2) * 6, P.y);
+    if (!isFloor(tile(Math.floor(x / CS), Math.floor(y / CS)))) continue; const l = lightAt(x, y), b = Math.min(1, (l[0] + l[1] + l[2]) * .5); if (b < .25) continue;
+    cube([.13 + q * .1, l[0] * 1.3, l[1] * 1.2, l[2] * 1.1, .25 + .4 * b], x, y, heightAt(x, y) + 2 + ((q * 22 + time * (.6 + u)) % 22)); }
   R.cubes(cubeBuf, nc);
   // the weapon is drawn last, in front of everything, so it never pokes into walls
   if (!P.dead && (state === 'play' || state === 'pause')) {
@@ -1369,12 +1392,14 @@ function render(now) {
     // it is held in the view, so it tips up and down with it: a shear that follows the eye's pitch
     const tip = [1, 0, eye.pitch * Math.cos(eye.yaw), 0, 0, 1, eye.pitch * Math.sin(eye.yaw), 0, 0, 0, 1, 0, 0, 0, -eye.pitch * (eye.x * Math.cos(eye.yaw) + eye.y * Math.sin(eye.yaw)), 1];
     const put = (f, side, z) => [eye.x + fxv * f - fyv * side, eye.y + fyv * f + fxv * side, z], rl = P.reload > 0 ? Math.sin(Math.PI * (1 - P.reload / RELOAD[P.weapon])) : 0;   // rl: how far through a reload
-    const bobz = stride * .2 * pace, sway = Math.sin(P.bob) * .2 * pace - sideStep, rear = 4.3 - k * 1.25, drop = eye.z - 1.15 * (H / W) / .5625 - hgt + k * .22 + bobz + GUN_UP - (P.swap > 0 ? P.swap * 9 : 0) - P.sprint * .8 - rl * 2.6 - P.lunge * 1.4;   // it kicks back and up when fired, bobs with your stride, dips while you change weapon, and drops a little at a sprint
+    const lagY = P.lagY || 0, lagP = P.lagP || 0, lean = P.lean || 0, pt = P.weapon === 1 && P.cool > 0 ? 1 - P.cool / (w.rate) : 1, pump = pt > .32 && pt < .8 ? Math.sin(Math.PI * (pt - .32) / .48) : 0;   // the shotgun is pumped between shots: back, and home
+    const bobz = stride * .2 * pace, sway = Math.sin(P.bob) * .2 * pace - sideStep - lagY * 7 + lean * .35, rear = 4.3 - k * 1.25 - pump * .9, drop = lagP * 6 - Math.abs(lean) * .12 + Math.sin(time * 1.5) * .04 - pump * .25 + eye.z - 1.15 * (H / W) / .5625 - hgt + k * .22 + bobz + GUN_UP - (P.swap > 0 ? P.swap * 9 : 0) - P.sprint * .8 - rl * 2.6 - P.lunge * 1.4;   // it kicks back and up when fired, bobs with your stride, dips while you change weapon, and drops a little at a sprint
     const gp = put(rear + len / 2, 2.3 + sway, drop), hp = put(rear + len * HAND[0] + HAND[1], 2.3 + sway + HAND[2], drop + HAND[3]);
     R.draw(mesh('v_hand'), mmul(tip, M4(hp[0], hp[1], hp[2], yaw, k * .2 + HAND[4], 0, 3)), GUN_VOX);                                // the hand on the grip
-    R.draw(mesh(w.gun), mmul(tip, M4(gp[0], gp[1], gp[2], yaw + rl * .5, k * .2 + rl * .7, 0, -len / 2)), GUN_VOX);   // tipped up and across while it is reloaded
+    R.draw(mesh(w.gun), mmul(tip, M4(gp[0], gp[1], gp[2], yaw + rl * .5 - lagY * .9 + lean * .05, k * .2 + rl * .7 + pump * .12, 0, -len / 2)), GUN_VOX);   // tipped up and across while it is reloaded
     if (P.flash > 0 && P.weapon !== 3) { const fp = put(rear + len + .4, 2.3 + sway - .35, drop + hgt * .6); R.draw(mesh('w_flash'), mmul(tip, M4(fp[0], fp[1], fp[2], yaw)), .3); }
   }
+  { const m = MIST[ROOM_OF[tile(Math.floor(P.x / CS), Math.floor(P.y / CS))]] || MIST.metro; for (let i = 0; i < 6; i++) mist[i] += (m[i] - mist[i]) * .03; mist[6] += (P.z - mist[6]) * .08; }
   // the lights that matter this frame: flashes first, then the nearest lamps
   const ls = flashes.map(f => { const k = f.I * (1 - f.t / f.life); return [f.x, f.y, f.z, f.R, f.col[0] * k, f.col[1] * k, f.col[2] * k, 0]; });
   for (const s of shots.slice(0, 3)) ls.push([s.x, s.y, s.lift, 30, 1, .75, .35, 0]);
@@ -1402,7 +1427,7 @@ function render(now) {
   for (const e of enemies) if (!e.dead) bodies.push([Math.hypot(e.x - P.x, e.y - P.y), e.x, e.y, e.r * 1.05, e.z + (e.fly || 0) + (RIG[e.type] ? RIG[e.type].H : MODEL_DEFS[e.type + '_i'].H) * VOX]);
   if (R.fast) for (const d of decor) if (!d.gone && d.solid && d.r >= 2) bodies.push([Math.hypot(d.x - P.x, d.y - P.y), d.x, d.y, Math.min(d.r, 6), MODEL_DEFS[d.model].H * (MODEL_DEFS[d.model].o ? MODEL_DEFS[d.model].o.vox : 1)]);   // (with full lighting the furniture casts its true shadow instead)
   bodies.sort((a, b) => a[0] - b[0]);
-  R.end({ lights: ls, bodies: bodies.slice(0, 10).map(b => b.slice(1)), fog: [.04, .035, .05, 120], sky: LEVEL === 2 || 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))), time, dim: (.25 + .75 * dim) * (P.escape ? .7 + .3 * Math.sin(time * 13) : 1), smoke: smokeBuf, smokeCount: ns, grade: (g => { for (let i = 0; i < 4; i++) grade[i] += (g[i] - grade[i]) * .04; return grade; })(P.escape ? [1.25, .92, .85, 1.15] : GRADE[ROOM_OF[tile(Math.floor(P.x / CS), Math.floor(P.y / CS))]] || [1, 1, 1, 1]) });
+  R.end({ lights: ls, bodies: bodies.slice(0, 10).map(b => b.slice(1)), fog: [.04, .035, .05, 120], sky: LEVEL === 2 || 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))), time, dim: (.25 + .75 * dim) * (P.escape ? .7 + .3 * Math.sin(time * 13) : 1), mist: mist.slice(0, 3).concat(mist[2]).map((v, i) => i === 2 ? mist[6] : v), mistc: mist.slice(3, 6), kinds: kindCols(time), smoke: smokeBuf, smokeCount: ns, grade: (g => { for (let i = 0; i < 4; i++) grade[i] += (g[i] - grade[i]) * .04; return grade; })(P.escape ? [1.25, .92, .85, 1.15] : GRADE[ROOM_OF[tile(Math.floor(P.x / CS), Math.floor(P.y / CS))]] || [1, 1, 1, 1]) });
   if (own) Object.assign(P, own);
   if (P.escape) $('cap').textContent = `ÉVACUEZ · 0:${String(Math.max(0, Math.ceil(P.escape))).padStart(2, '0')}`; else if (state !== 'intro' && $('cap').textContent) $('cap').textContent = '';
   $('stats').textContent = `${n} draws, ${Math.round(R.stats.tris / 1000)}k triangles.`;
