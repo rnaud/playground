@@ -39,12 +39,12 @@ const FOG = `uniform vec4 u_fog; vec3 fog(vec3 c, float dist) { return mix(c, u_
 const VS = `
 attribute vec3 a_pos; attribute float a_layer; attribute vec3 a_color; attribute vec3 a_normal;
 uniform vec2 u_obj; uniform float u_rot; uniform vec3 u_cam; uniform vec2 u_pitch; uniform vec4 u_view;
-uniform float u_scale, u_explode, u_zscale, u_H, u_flat, u_light, u_shade; uniform vec2 u_shift; uniform vec3 u_fall; uniform float u_lift, u_flash; // fall: direction x,y + angle; lift: height above the ground
+uniform float u_scale, u_explode, u_zscale, u_H, u_flat, u_light, u_shade, u_vox; uniform vec2 u_shift; uniform vec3 u_fall; uniform float u_lift, u_flash; // fall: direction x,y + angle; lift: height above the ground
 varying vec3 v_color; varying float v_dist;` + PROJ + `
 vec2 rot(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(p.x * c - p.y * s, p.x * s + p.y * c); }
 void main() {
   float raw = (a_layer * u_explode + a_pos.z) * u_zscale;             // height before a knocked-over object tips
-  vec2 world = u_obj + rot(a_pos.xy, u_rot) + u_fall.xy * sin(u_fall.z) * raw;
+  vec2 world = u_obj + rot(a_pos.xy * u_vox, u_rot) + u_fall.xy * sin(u_fall.z) * raw;   // u_vox: world units per voxel, for models finer than the grid
   float up = (raw * cos(u_fall.z) + u_lift) * (1.0 - u_flat);
   if (u_proj.w > 0.5) {
     gl_Position = persp(world + u_shift * u_flat, up, u_view); v_dist = gl_Position.w;
@@ -148,7 +148,7 @@ function Renderer(canvas, worldSize = WORLD) {
       let groundTex = texFor.get(image);
       if (!groundTex) {
         // copy onto a power-of-two canvas so WebGL1 can build mipmaps: distant ground then averages instead of sparkling
-        const pot = mkCanvas(2048, 2048), pg = pot.getContext('2d'); pg.imageSmoothingEnabled = false; pg.drawImage(image, 0, 0, 2048, 2048);
+        const S = image.width > 2048 ? 4096 : 2048, pot = mkCanvas(S, S), pg = pot.getContext('2d'); pg.imageSmoothingEnabled = false; pg.drawImage(image, 0, 0, S, S);   // a finer source image gets a finer texture
         groundTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, groundTex);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, pot); gl.generateMipmap(gl.TEXTURE_2D);
         for (const [k, v] of [[gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
@@ -173,7 +173,7 @@ function Renderer(canvas, worldSize = WORLD) {
       } else { gl.enable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.STENCIL_TEST); }
       camera(u);
       gl.uniform2f(u.u_obj, x, y); gl.uniform1f(u.u_rot, rot); gl.uniform3f(u.u_cam, cam.x, cam.y, cam.a);
-      gl.uniform1f(u.u_scale, o.scale); gl.uniform1f(u.u_explode, o.explode); gl.uniform1f(u.u_zscale, o.zscale); gl.uniform1f(u.u_H, m.H);
+      gl.uniform1f(u.u_scale, o.scale); gl.uniform1f(u.u_explode, o.explode); gl.uniform1f(u.u_zscale, o.zscale * (o.vox || 1)); gl.uniform1f(u.u_vox, o.vox || 1); gl.uniform1f(u.u_H, m.H);
       gl.uniform1f(u.u_flat, shadow ? 1 : 0); gl.uniform2f(u.u_shift, 3, 2);
       gl.uniform3f(u.u_fall, fall && fall.dx || 0, fall && fall.dy || 0, fall && fall.a || 0); gl.uniform1f(u.u_lift, fall && fall.lift || 0); gl.uniform1f(u.u_flash, fall && fall.flash || 0);
       gl.uniform1f(u.u_light, o.light ? 1 : 0); gl.uniform1f(u.u_shade, o.shade ? 1 : 0);

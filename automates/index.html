@@ -37,7 +37,7 @@
 
   <section class="card">
     <div class="stage">
-      <canvas id="scene" width="400" height="225"></canvas>
+      <canvas id="scene" width="960" height="540"></canvas>
       <span id="fps"></span>
       <span id="cross" class="ov"></span>
       <span id="log" class="ov"></span>
@@ -62,8 +62,9 @@
 </main>
 <script>window.ALL_MODELS = true;</script>
 <script src="../shared/sim.js"></script>
-<script>Object.assign(FP, { eye: 9, focal: 250, near: 1, far: 340, fog0: 24, fog: [15, 13, 22] });</script>
+<script>Object.assign(FP, { eye: 9, focal: 600, near: 1, far: 340, fog0: 24, fog: [15, 13, 22] });</script>
 <script src="../shared/voxel.js"></script>
+<script src="art.js"></script>
 <script src="game.js"></script>
 </body>
 </html>
