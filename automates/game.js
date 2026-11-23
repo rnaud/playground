@@ -30,21 +30,22 @@ for (const [x, y] of [[28, 6], [28, 7], [32, 6], [31, 6], [27, 12], [28, 12], [3
 carve(26, 16, 33, 24, 'i', 'I'); for (const [x, y] of [[28, 18], [31, 18], [28, 22], [31, 22]]) tiles[y][x] = 'G';
 carve(30, 25, 30, 25, 'i', 'I');
 door(8, 25); door(4, 18); door(12, 18, 'blue'); door(20, 13); door(17, 5); door(23, 5); door(25, 9); door(30, 15, 'red');
-// wall variety: posters, station signs and lamps, wine racks, paintings, windows, pipework and machinery
-for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
-  const t = tiles[y][x], h = hash(x * 3, y * 5);
-  if (t === 'M' && h < .24) tiles[y][x] = h < .08 ? 'P' : h < .16 ? 'N' : 'L';
-  if (t === 'B' && x > 14 && h < .3) tiles[y][x] = 'V';
-  if (t === 'W' && h < .22) tiles[y][x] = 'F';
-  if (t === 'S' && h < .3) tiles[y][x] = 'X';
-  if (t === 'I' && h < .55) tiles[y][x] = h < .3 ? 'G' : h < .42 ? 'T' : 'Y';
-}
+// wall decoration, placed by hand: posters, station signs and sconces, wine racks, paintings, windows, pipework and machinery
+const place = (t, base, list) => { for (const [x, y] of list) if (tiles[y][x] === base) tiles[y][x] = t; };
+place('P', 'M', [[2, 25], [6, 25], [10, 25], [14, 25], [3, 30], [11, 30]]); place('N', 'M', [[4, 25], [12, 25], [7, 30]]);
+place('L', 'M', [[6, 16], [10, 16], [6, 21], [10, 21], [4, 17], [12, 20], [7, 23], [9, 22]]);
+place('V', 'B', [[17, 23], [19, 23], [21, 23], [23, 23], [17, 13], [18, 13], [22, 13], [23, 13], [25, 15], [25, 17], [25, 19], [25, 21]]);
+place('F', 'W', [[20, 5], [15, 7], [15, 11], [18, 13], [22, 13], [15, 2], [25, 2], [18, 0], [22, 0]]);
+place('X', 'S', [[27, 3], [29, 3], [31, 3], [33, 3], [34, 5], [34, 7], [34, 11], [34, 13], [27, 15], [33, 15]]);
+place('G', 'I', [[27, 15], [33, 15], [34, 18], [34, 22], [28, 25], [32, 25]]); place('T', 'I', [[34, 20], [26, 25], [34, 24]]); place('Y', 'I', [[28, 15], [32, 15], [34, 16], [33, 25]]);
 const FLOORS = 'mrcbwkgoiD', isFloor = t => FLOORS.includes(t);
 const tile = (cx, cy) => cx < 0 || cy < 0 || cx >= GW || cy >= GH ? ' ' : tiles[cy][cx];
 const doorAt = (cx, cy) => doors.find(d => d.cx === cx && d.cy === cy);
 for (const d of doors) { d.vertical = !isFloor(tile(d.cx - 1, d.cy)); d.floor = d.vertical ? tile(d.cx, d.cy - 1) : tile(d.cx - 1, d.cy); d.x = d.cx * CS + 8; d.y = d.cy * CS + 8; }
 // solid for movement and bullets: walls, and doors that are not open enough
 const solidCell = (cx, cy) => { const t = tile(cx, cy); if (t === 'D') return doorAt(cx, cy).open < 0.7; return !isFloor(t); };
+const PIT = 5, inPit = (x, y) => tile(Math.floor(x / CS), Math.floor(y / CS)) === 'r';              // the track bed lies below the platform: seen and shot across, never walked on
+const vaulted = (cx, cy) => { const t = tile(cx, cy); return (t === 'r' || t === 'm') && cy >= 26 && cy <= 29; };   // the platform hall has a barrel vault instead of a flat ceiling
 const solidAtPt = (x, y) => solidCell(Math.floor(x / CS), Math.floor(y / CS));
 const boxHits = (x, y, r) => solidAtPt(x - r, y - r) || solidAtPt(x + r, y - r) || solidAtPt(x - r, y + r) || solidAtPt(x + r, y + r);
 
@@ -55,7 +56,8 @@ const VPU = 4, VOX = 1 / VPU, WPU = 8, WV = CS * WPU, HV = WH * WPU, THICK = WPU
 const atlasCv = mkCanvas(atlasImg.width, atlasImg.height), AW = atlasImg.width;
 atlasCv.getContext('2d').drawImage(atlasImg, 0, 0);
 const AD = atlasCv.getContext('2d').getImageData(0, 0, AW, atlasImg.height).data;
-const shade = (c, k) => Math.min(255, (c >> 16 & 255) * k | 0) << 16 | Math.min(255, (c >> 8 & 255) * k | 0) << 8 | Math.min(255, (c & 255) * k | 0);
+const GLOW = 0x1000000;                                                      // set on a colour that glows: it ignores the baked light
+const shade = (c, k) => c >= GLOW ? c : Math.min(255, (c >> 16 & 255) * k | 0) << 16 | Math.min(255, (c >> 8 & 255) * k | 0) << 8 | Math.min(255, (c & 255) * k | 0);
 // A sprite: colours with the bottom row first, -1 where empty. Asking for a size resamples it; `flip` mirrors it.
 function sprite(name, w, h, flip) {
   const r = ART.rects[name], W = w || (r ? r[2] : 24), H = h || (r ? r[3] : 24), c = new Int32Array(W * H);
@@ -63,7 +65,7 @@ function sprite(name, w, h, flip) {
     const xx = flip ? W - 1 - x : x;
     if (!r) { c[z * W + x] = ((x >> 2) + (z >> 2)) & 1 ? 0xc040c0 : 0x402040; continue; }                 // a sheet that has not been generated yet
     const i = ((r[1] + r[3] - 1 - (z * r[3] / H | 0)) * AW + r[0] + (xx * r[2] / W | 0)) * 4;
-    c[z * W + x] = AD[i + 3] < 128 ? -1 : AD[i] << 16 | AD[i + 1] << 8 | AD[i + 2];
+    c[z * W + x] = AD[i + 3] < 128 ? -1 : (AD[i + 3] < 230 ? GLOW : 0) | AD[i] << 16 | AD[i + 1] << 8 | AD[i + 2];
   }
   return { name, w: W, h: H, c };
 }
@@ -92,7 +94,7 @@ function relief(s) {
 function panelMesh(name, s, flat, thick) {
   const { w, h, c } = s, dep = flat ? new Uint8Array(w * h) : relief(s), v = [], col = new Int32Array(w * h), done = new Uint8Array(w * h);
   const D = (x, z) => dep[z * w + x];
-  const quad = (p, k, n) => { for (const i of [0, 1, 2, 0, 2, 3]) v.push(p[i][0] - w / 2, p[i][1], 0, p[i][2], (k >> 16 & 255) / 255, (k >> 8 & 255) / 255, (k & 255) / 255, n[0], n[1], n[2]); };
+  const quad = (p, k, n) => { for (const i of [0, 1, 2, 0, 2, 3]) v.push(p[i][0] - w / 2, p[i][1], 0, p[i][2], (k >> 16 & 255) / 255 + (k >= GLOW ? 2 : 0), (k >> 8 & 255) / 255, (k & 255) / 255, n[0], n[1], n[2]); };
   for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) {                                               // soft contact shadow where a neighbour stands proud
     const d = D(x, z); let occ = 0;
     for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const xx = x + dx, zz = z + dz; if (xx >= 0 && xx < w && zz >= 0 && zz < h) occ += Math.min(4, Math.max(0, d - D(xx, zz))); }
@@ -109,9 +111,9 @@ function panelMesh(name, s, flat, thick) {
       quad([[x, -d, z], [e, -d, z], [e, -d, t], [x, -d, t]], k, [0, 1, 0]);
     }
     for (let x = 0; x <= w; x++) {                                                                        // steps between columns, and the two ends
-      const a = x === 0 ? thick : D(x - 1, z), b = x === w ? thick : D(x, z);
-      if (a < b) quad([[x, -b, z], [x, -a, z], [x, -a, z + 1], [x, -b, z + 1]], shade(c[z * w + x - 1], .82), [1, 0, 0]);
-      else if (a > b) quad([[x, -a, z], [x, -b, z], [x, -b, z + 1], [x, -a, z + 1]], shade(c[z * w + x], .82), [-1, 0, 0]);
+      const a = x === 0 ? thick : D(x - 1, z), b = x === w ? thick : D(x, z), X = x === 0 ? .25 : x === w ? w - .25 : x;   // the end caps sit just inside the cell, so they never share a plane with the wall round the corner
+      if (a < b) quad([[X, -b, z], [X, -a, z], [X, -a, z + 1], [X, -b, z + 1]], shade(c[z * w + x - 1], .82), [1, 0, 0]);
+      else if (a > b) quad([[X, -a, z], [X, -b, z], [X, -b, z + 1], [X, -a, z + 1]], shade(c[z * w + x], .82), [-1, 0, 0]);
     }
     if (z < h - 1) for (let x = 0; x < w; x++) {                                                          // ledges and their undersides
       const a = D(x, z), b = D(x, z + 1);
@@ -123,20 +125,32 @@ function panelMesh(name, s, flat, thick) {
 }
 const WALL_BASE = { P: 'M', N: 'M', L: 'M', V: 'B', F: 'W', X: 'S', G: 'I', T: 'I', Y: 'I' };              // a variant falls back to its plain wall until its sheet exists
 const wallSprite = t => sprite(ART.rects['wall_' + t] ? 'wall_' + t : 'wall_' + (WALL_BASE[t] || t), WV, HV, WALL_FLIP);
-const PANEL = {}, panelFor = (t, flat) => PANEL[t + flat] || (PANEL[t + flat] = panelMesh(`panel_${t}_${flat}`, wallSprite(t), flat, THICK));
+const TUNNEL = { '0,28': 1, '0,29': 0, '15,28': 0, '15,29': 1 };                      // which half of the tunnel-mouth picture each end cell of the track shows
+const tunnelSprite = half => { const s = sprite('tunnel', 2 * WV, HV + PIT * WPU, WALL_FLIP), c = new Int32Array(WV * s.h); for (let z = 0; z < s.h; z++) for (let x = 0; x < WV; x++) c[z * WV + x] = s.c[z * s.w + x + half * WV]; return { name: 'tunnel' + half, w: WV, h: s.h, c }; };
+const PANEL = {}, panelFor = (t, flat) => PANEL[t + flat] || (PANEL[t + flat] = t[0] === 'U' ? panelMesh('panel_' + t, tunnelSprite(+t[1]), 0, THICK) : panelMesh(`panel_${t}_${flat}`, wallSprite(t), flat, THICK));
 const FAR = {}, farFor = t => FAR[t] || (FAR[t] = panelMesh('far_' + t, sprite(wallSprite(t).name, CS * 2, WH * 2, WALL_FLIP), 1, 2));   // a coarse flat panel for distant walls
 const POST = {}, postFor = t => POST[t] || (POST[t] = (s => buildMesh({ name: 'post_' + t, W: THICK, L: THICK, H: HV, fn: (x, y, z) => shade(s.c[z * WV + x], .9) }))(wallSprite(WALL_BASE[t] || t)));
 const opens = (cx, cy) => { const t = tile(cx, cy); return isFloor(t) || t === 'H'; };
-const panels = [], posts = [], hedges = [];
+const panels = [], posts = [], hedges = [], extras = [];
 for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {
-  const t = tile(cx, cy), x = cx * CS + 8, y = cy * CS + 8;
+  const t = tile(cx, cy), x = cx * CS + 8, y = cy * CS + 8, tun = TUNNEL[cx + ',' + cy];
   if (t === 'H') { hedges.push({ x, y }); continue; }
   if (t === ' ' || isFloor(t)) continue;
   for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (opens(cx + sx, cy + sy))               // beside a door the panel stays flat so the door closes without gaps
-    panels.push({ m: panelFor(t, tile(cx + sx, cy + sy) === 'D' ? 1 : 0), far: farFor(t), x: x + sx * 8, y: y + sy * 8, rot: Math.atan2(-sx, sy), nx: sx, ny: sy });
+    panels.push(tun != null ? { m: panelFor('U' + tun, 0), x: x + sx * 8, y: y + sy * 8, rot: Math.atan2(-sx, sy), nx: sx, ny: sy, lift: -PIT }
+      : { m: panelFor(t, tile(cx + sx, cy + sy) === 'D' ? 1 : 0), far: farFor(t), x: x + sx * 8, y: y + sy * 8, rot: Math.atan2(-sx, sy), nx: sx, ny: sy, lift: 0 });
   for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) if (opens(cx + sx, cy + sy) && !opens(cx + sx, cy) && !opens(cx, cy + sy))   // inside corners get a post
-    posts.push({ m: postFor(t), x: x + sx * 7.5, y: y + sy * 7.5 });
+    posts.push({ m: postFor(t), x: x + sx * 7.45, y: y + sy * 7.45 });      // a hair inside the cell, for the same reason
 }
+// the sides of the track pit: the platform edge on one side, sooty brick under the far wall on the other
+{ const strip = (name, edge) => { const h = PIT * WPU, c = new Int32Array(WV * h);
+    for (let z = 0; z < h; z++) for (let x = 0; x < WV; x++) { const row = z >> 2; c[z * WV + x] = edge && z >= h - 8 ? 0xf2f1ea : edge && z >= h - 12 ? 0x24406e : z % 4 === 0 || (x + (row & 1) * 6) % 12 === 0 ? 0x221d1c : noise3(x / 12 | 0, row, 3) > .5 ? 0x3a3230 : 0x332c2a; }
+    return panelMesh(name, { name, w: WV, h, c }, 0, THICK); };
+  const edge = strip('pit_edge', true), soot = strip('pit_soot', false);
+  for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) if (tile(cx, cy) === 'r') for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const nt = tile(cx + sx, cy + sy);
+    if (nt !== 'r' && TUNNEL[(cx + sx) + ',' + (cy + sy)] == null) panels.push({ m: isFloor(nt) ? edge : soot, x: cx * CS + 8 + sx * 8, y: cy * CS + 8 + sy * 8, rot: Math.atan2(sx, -sy), nx: -sx, ny: -sy, lift: -PIT });
+  } }
 model('hedge', CS * VPU, CS * VPU, 52, (x, y, z) => { const n = noise3(x >> 1, y >> 1, z >> 1), m = noise3(x, y, z); return shade(n > .7 ? 0x3f9a3e : n > .3 ? 0x2f8a3c : 0x236e30, (z > 49 ? 1.15 : .8 + z / 260) * (m > .8 ? 1.12 : m < .15 ? .85 : 1)); });
 
 // ---------- floors and ceilings: each reference picture covers 2 x 2 cells ----------
@@ -152,16 +166,70 @@ const floorTex = mkCanvas(SIZE * WPU, SIZE * WPU), ceilTex = mkCanvas(SIZE * WPU
   };
   for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {
     let t = tile(cx, cy); if (t === 'D') t = doorAt(cx, cy).floor;
-    if (!isFloor(t)) continue;
-    blit(fg, 'floor_' + FLOOR_ART[t], cx, cy);
+    if (t === 'H') { blit(fg, 'floor_lawn', cx, cy); continue; }                                        // hedges stand on the lawn, under the sky
+    if (!isFloor(t)) {
+      const open = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([sx, sy]) => 'goH'.includes(tile(cx + sx, cy + sy)) || vaulted(cx + sx, cy + sy));
+      fg.fillStyle = cg.fillStyle = '#14110f'; fg.fillRect(cx * WV, cy * WV, WV, WV); if (!open) cg.fillRect(cx * WV, cy * WV, WV, WV); continue;
+    }   // dark under and over the walls, so a recessed wall never shows a gap
+    if (t !== 'r') blit(fg, 'floor_' + FLOOR_ART[t], cx, cy);                                           // the track bed is real geometry, further down
     const X = cx * WV, Y = cy * WV;
     if (t === 'm' && tile(cx, cy + 1) === 'r') { fg.fillStyle = '#f2f1ea'; fg.fillRect(X, Y + WV - 28, WV, 28); fg.fillStyle = '#24406e'; fg.fillRect(X, Y + WV - 36, WV, 8); }   // platform edge
     if (t === 'k') for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (tile(cx + sx, cy + sy) !== 'k') {                                                        // carpet border
       const band = (o, wd, colr) => { fg.fillStyle = colr; if (sx) fg.fillRect(sx > 0 ? X + WV - o - wd : X + o, Y, wd, WV); else fg.fillRect(X, sy > 0 ? Y + WV - o - wd : Y + o, WV, wd); };
       band(0, 6, '#5e1218'); band(6, 12, '#c9a23a');
     }
-    if (CEIL_ART[t]) blit(cg, 'ceil_' + CEIL_ART[t], cx, cy);                                             // grass and paths are under open sky
+    if (CEIL_ART[t] && !vaulted(cx, cy)) blit(cg, 'ceil_' + CEIL_ART[t], cx, cy);                                             // grass and paths are under open sky
   }
+}
+
+// ---------- the Metro hall: a sunken track with real rails, and a tiled barrel vault ----------
+// a mesh straight from quads: [[four corners as x, y, z in voxels], colour]
+const meshOf = (name, quads, W, L, H) => {
+  const v = [];
+  for (const [p, k] of quads) for (const i of [0, 1, 2, 0, 2, 3]) v.push(p[i][0] - W / 2, p[i][1] - L / 2, 0, p[i][2], (k >> 16 & 255) / 255 + (k >= GLOW ? 2 : 0), (k >> 8 & 255) / 255, (k & 255) / 255, 0, 0, 1);
+  return { name, W, L, H, data: new Float32Array(v), count: v.length / 10, top: new Float32Array(0), topCount: 0 };
+};
+function trackMesh(half) {                                                    // the rail picture raised into relief: rails stand proud of the sleepers, sleepers of the ballast
+  const s = sprite('floor_rails', 128, 128), W = 64, L = 128, q = [];
+  const col = (x, y) => s.c[(127 - y) * 128 + x + half * 64];
+  const hgt = (x, y) => { const k = col(x, y), r = k >> 16 & 255, g = k >> 8 & 255, b = k & 255; return Math.abs(r - g) < 26 && Math.abs(g - b) < 30 && r + g + b > 420 ? 3 : r > b * 1.5 && r > 90 && g < r * .75 ? 1 : 0; };
+  for (let y = 0; y < L; y++) {
+    for (let x = 0; x < W;) { let e = x + 1; const k = col(x, y), h = hgt(x, y); while (e < W && col(e, y) === k && hgt(e, y) === h) e++; q.push([[[x, y, h], [e, y, h], [e, y + 1, h], [x, y + 1, h]], k]); x = e; }
+    for (let x = 0; x < W; x++) {
+      const h = hgt(x, y), hx = x < W - 1 ? hgt(x + 1, y) : h, hy = y < L - 1 ? hgt(x, y + 1) : h;
+      if (hx !== h) q.push([[[x + 1, y, Math.min(h, hx)], [x + 1, y + 1, Math.min(h, hx)], [x + 1, y + 1, Math.max(h, hx)], [x + 1, y, Math.max(h, hx)]], shade(h > hx ? col(x, y) : col(x + 1, y), .7)]);
+      if (hy !== h) q.push([[[x, y + 1, Math.min(h, hy)], [x + 1, y + 1, Math.min(h, hy)], [x + 1, y + 1, Math.max(h, hy)], [x, y + 1, Math.max(h, hy)]], shade(h > hy ? col(x, y) : col(x, y + 1), .7)]);
+    }
+  }
+  return meshOf('track' + half, q, W, L, 4);
+}
+const SPRING = 19 * VPU, RISE = 9 * VPU, vaultAt = j => Math.round(SPRING + RISE * Math.sqrt(Math.max(0, 1 - ((j + .5 - 128) / 128) ** 2)));   // the vault's height across the hall, in voxels
+function vaultMesh(bay) {                                                     // one 16-unit length of vault; `bay` lifts it clear of the door in the north wall
+  const s = sprite('vault', 64, 32), W = 64, L = 256, q = [], hv = j => bay && j < 36 ? Math.max(vaultAt(j), WH * VPU) : vaultAt(j);
+  const rowOf = (row, plane) => { for (let x = 0; x < W;) { let e = x + 1; const k = s.c[(row % 32) * 64 + x]; while (e < W && s.c[(row % 32) * 64 + e] === k) e++; q.push([plane(x, e), shade(k, .94)]); x = e; } };
+  let row = 0;
+  for (let j = 0; j < L; j++) {
+    const h = hv(j), n = j < L - 1 ? hv(j + 1) : h;
+    rowOf(row++, (x, e) => [[x, j, h], [e, j, h], [e, j + 1, h], [x, j + 1, h]]);
+    for (let z = Math.min(h, n); z < Math.max(h, n); z++) rowOf(row++, (x, e) => [[x, j + 1, z], [e, j + 1, z], [e, j + 1, z + 1], [x, j + 1, z + 1]]);
+    if (bay && j < 36 && vaultAt(j) < h) for (const X of [0, W]) q.push([[[X, j, vaultAt(j)], [X, j + 1, vaultAt(j)], [X, j + 1, h], [X, j, h]], 0xdedcd2]);   // the cheeks of the door bay
+  }
+  return meshOf('vault' + (bay ? 1 : 0), q, W, L, SPRING + RISE);
+}
+function lunetteMesh() {                                                      // the tiled wall above the tunnel mouth, up to the vault
+  const s = sprite('vault', 64, 32), q = [];
+  for (let z = WH * VPU; z < SPRING + RISE; z++) for (let j = 0; j < 256; j++) if (vaultAt(j) > z) q.push([[[32, j, z], [32, j + 1, z], [32, j + 1, z + 1], [32, j, z + 1]], shade(s.c[(z % 32) * 64 + j % 64], .9)]);
+  return meshOf('lunette', q, 64, 256, SPRING + RISE);
+}
+{ const track = [trackMesh(0), trackMesh(1)], vault = [vaultMesh(false), vaultMesh(true)], lunette = lunetteMesh();
+  let x0 = 99, x1 = 0, y0 = 99, y1 = 0;
+  for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) if (vaulted(cx, cy)) { x0 = Math.min(x0, cx); x1 = Math.max(x1, cx); y0 = Math.min(y0, cy); y1 = Math.max(y1, cy); }
+  const mid = (y0 + y1 + 1) / 2 * CS;                                         // the vault spans the hall from wall to wall; the track is its southern half
+  for (let cx = x0; cx <= x1; cx++) {
+    extras.push({ m: track[cx & 1], x: cx * CS + 8, y: (y1) * CS, lift: -PIT, r: 20 });
+    extras.push({ m: vault[tile(cx, y0 - 1) === 'D' ? 1 : 0], x: cx * CS + 8, y: mid, lift: 0, r: 40 });
+  }
+  extras.push({ m: lunette, x: x0 * CS - 8, y: mid, lift: 0, r: 40 }, { m: lunette, x: (x1 + 1) * CS - 8, y: mid, lift: 0, r: 40 });
 }
 
 // ---------- models from front views ----------
@@ -178,7 +246,10 @@ function inflate(s, T, o = {}) {
   return { W: w, L, H: h, fn: st => (x, y, z) => {
     const k = c[z * w + x]; if (k < 0) return null;
     const half = Math.min(T / 2, .6 + d[z * w + x] * (o.round || .9)), yy = y + .5 - L / 2 - (z < legs ? (x < w / 2 ? st : -st) * 3 : 0);
-    return Math.abs(yy) > half ? null : o.even || yy > half - 1.6 ? k : shade(k, .72);
+    if (Math.abs(yy) > half) return null;
+    if (o.even || yy >= 0) return k;                                                                      // the front half shows the front view
+    const b = o.back ? o.back.c[z * w + w - 1 - x] : -1;                                                  // the back half shows the back view, mirrored as you walk round
+    return b < 0 ? shade(k, .72) : b;
   } };
 }
 function lathe(name, s) {                                                     // spin a symmetric front view around its axis
@@ -194,30 +265,97 @@ function lathe(name, s) {                                                     //
 }
 const box = (name, s, D) => model(name, s.w, D, s.h, (x, y, z) => { const k = s.c[z * s.w + x]; return k < 0 ? null : y === 0 || y === D - 1 ? k : shade(k, .85); });
 // the Baron's machines: frames w and b walk, a attacks
-for (const [n, T, legs] of [['automate', 12, .36], ['scaphandre', 24, .34], ['colosse', 30, .34]]) {
-  const m = inflate(sprite(n, 0, 0, SPRITE_FLIP), T, { legs });
-  for (const [f, st] of [['w', -1], ['b', 1], ['a', 0]]) model(`${n}_${f}`, m.W, m.L, m.H, m.fn(st));
+// frames: i at ease (not yet alerted), w and b advancing with the gun levelled at you, a firing; g0.. are the pieces it breaks into
+const GIBS = {};
+for (const [n, T, legs] of [['automate', 12, .36], ['scaphandre', 24, .34], ['colosse', 30, .34], ['lanterne', 0, 0]]) {
+  const thick = s => T || Math.round(s.w * .7), o = s => ({ legs, round: T ? .9 : 1.1, back: ART.rects[n + '_back'] && sprite(n + '_back', s.w, s.h, SPRITE_FLIP) });
+  const pose = k => sprite(ART.rects[n + k] ? n + k : n, 0, 0, SPRITE_FLIP), ease = pose(''), aim = pose('_aim'), shoot = ART.rects[n + '_fire'] ? pose('_fire') : aim;
+  const add = (f, s, st) => { const m = inflate(s, thick(s), o(s)); model(`${n}_${f}`, m.W, m.L, m.H, m.fn(st)); };
+  add('i', ease, 0); add('w', n === 'lanterne' ? ease : aim, -1); add('b', n === 'lanterne' ? ease : aim, 1); add('a', shoot, 0);
+  GIBS[n] = [];                                                              // cut the figure into a grid of chunks
+  const cols = n === 'lanterne' ? 2 : 3, rows = n === 'lanterne' ? 2 : 4, cw = Math.ceil(ease.w / cols), ch = Math.ceil(ease.h / rows);
+  for (let r = 0; r < rows; r++) for (let q = 0; q < cols; q++) {
+    const c = new Int32Array(cw * ch).fill(-1); let px = 0;
+    for (let z = 0; z < ch; z++) for (let x = 0; x < cw; x++) { const X = q * cw + x, Z = r * ch + z; if (X < ease.w && Z < ease.h && (c[z * cw + x] = ease.c[Z * ease.w + X]) >= 0) px++; }
+    if (px < 14) continue;
+    const m = inflate({ w: cw, h: ch, c }, Math.max(4, Math.round(thick(ease) * .6)), { even: true }), name = `${n}_g${GIBS[n].length}`;
+    model(name, m.W, m.L, m.H, m.fn(0)); GIBS[n].push({ name, dx: ((q + .5) * cw - ease.w / 2) * VOX, dz: r * ch * VOX });
+  }
 }
-{ const s = sprite('lanterne', 0, 0, SPRITE_FLIP), m = inflate(s, Math.round(s.w * .7), { round: 1.1 }); for (const f of ['w', 'b']) model('lanterne_' + f, m.W, m.L, m.H, m.fn(0)); }
 box('a_door', sprite('door', CS * VPU, WH * VPU), 16); box('a_door_red', sprite('door_red', CS * VPU, WH * VPU), 16); box('a_door_blue', sprite('door_blue', CS * VPU, WH * VPU), 16);
 box('a_key_red', sprite('key_red'), 3); box('a_key_blue', sprite('key_blue'), 3); box('a_baguette', sprite('baguette'), 10);
 for (const n of ['bullets', 'shells', 'cells']) { const s = sprite(n); box('a_' + n, s, Math.round(s.w * .7)); }
 { const s = sprite('helmet'), m = inflate(s, Math.round(s.w * .8), { round: 1.2 }); model('a_helmet', m.W, m.L, m.H, m.fn(0)); }
 lathe('a_wine', sprite('wine')); lathe('a_lamp', sprite('lamp')); lathe('a_drum', sprite('drum')); lathe('a_column', sprite('column'));
 box('a_cask', sprite('cask'), 44); lathe('a_table', sprite('table')); box('a_exit', sprite('exit'), 28);
+lathe('a_hang', sprite('hanglamp')); lathe('a_lantern', sprite('lantern')); lathe('a_bin', sprite('bin')); lathe('a_signal', sprite('signal')); box('a_bench', sprite('bench'), 14);
 { const s = sprite('crate'); box('a_crate', s, s.w); }
 // shots, sparks and debris stay simple shapes, at half scale so they sit with the finer models
 model('a_shot', 2, 4, 2, () => 0xffcf5c, .5); model('a_spark', 3, 3, 3, (x, y, z) => (x + y + z) % 2 ? 0x9fe8ff : 0xffffff, .5); model('a_shell', 4, 4, 4, (x, y, z) => Math.hypot(x - 1.5, y - 1.5, z - 1.5) < 2.2 ? 0xff5a3a : null, .5);
 model('a_bit', 2, 2, 2, () => 0xe0bb45, .4); model('a_smoke', 5, 5, 5, (x, y, z) => Math.hypot(x - 2, y - 2, z - 2) < 2.6 ? (noise3(x, y, z) > .5 ? 0xffcf5c : 0xff8a2a) : null, .5);
 model('a_bolt', 2, 6, 2, (x, y, z) => (y & 1) ? 0x9fe8ff : 0xffffff, .5);
+model('a_sparkle', 1, 1, 1, () => GLOW | 0xfff3b0, .35); model('a_ember', 1, 1, 1, () => GLOW | 0xff8a2a, .3);                 // sparks: they glow and bloom
+model('a_oil', 2, 2, 2, () => 0x17120e, .3);                                                                               // a drop of machine oil
+for (const [i, k] of [[1, .5], [2, .85]]) model('a_puff' + i, 5, 5, 5, (x, y, z) => Math.hypot(x - 2, y - 2, z - 2) < 2.6 ? (noise3(x, y, z + i) > .5 ? 0x8a8780 : 0x6a6762) : null, k);
+const blot = (r, dark, sheen) => (x, y) => { const d = Math.hypot(x - r, y - r) + noise3(x >> 1, y >> 1, r) * r * .5; return d > r ? null : noise3(x, y, 7) > .86 ? sheen : dark; };
+model('a_pool', 28, 28, 1, blot(14, 0x120e0b, 0x3a3128)); model('a_scorch', 44, 44, 1, blot(22, 0x0c0a09, 0x1e1a17)); model('a_hole', 2, 2, 2, () => 0x0e0c0b, .3);
+for (const n of ['a_shot', 'a_spark', 'a_shell', 'a_bit', 'a_smoke', 'a_bolt', 'a_sparkle', 'a_ember']) MODEL_DEFS[n].bright = true;   // these make their own light
 // weapons are relief cards cut from the first-person sheet: always seen from behind, exactly as drawn
 const WEAPON_VOX = 0.085;
 for (const n of ['w_pistol', 'w_shotgun', 'w_smg', 'w_tesla']) { const m = inflate(sprite(n, 0, 0, SPRITE_FLIP), 8, { even: true }); model(n, m.W, m.L, m.H, m.fn(0), WEAPON_VOX); }
-model('w_flash', 7, 4, 7, (x, y, z) => Math.abs(x - 3) + Math.abs(z - 3) < 4 - y * 0.6 ? (Math.abs(x - 3) + Math.abs(z - 3) < 2 ? 0xffffff : 0xffcf5c) : null, 0.3);
+model('w_flash', 7, 4, 7, (x, y, z) => Math.abs(x - 3) + Math.abs(z - 3) < 4 - y * 0.6 ? (Math.abs(x - 3) + Math.abs(z - 3) < 2 ? 0xffffff : 0xffcf5c) : null, 0.3); MODEL_DEFS.w_flash.bright = true;
 const MESH = {}, mesh = n => MESH[n] || (MESH[n] = buildMesh(MODEL_DEFS[n]));
 
 // ---------- things in the level ----------
 const C = (cx, cy, ox = 0, oy = 0) => ({ x: cx * CS + 8 + ox, y: cy * CS + 8 + oy });
+// ---------- light: every lamp is placed by hand, and its light is baked into the floors, ceilings and walls ----------
+const WARM = [1, .88, .62], AMBER = [1, .68, .38], COLD = [.45, .9, 1];
+const FIX = [];                                                              // lamps: a model, where it stands or what height it hangs from, and the light it gives
+for (let cx = 2; cx <= 14; cx += 2) FIX.push({ model: 'a_hang', x: cx * CS, y: 28 * CS, hang: (SPRING + RISE) * VOX, R: 66, I: .55, col: WARM });
+for (const [cx, cy] of [[7, 4], [8, 7], [2, 8], [8, 14], [5, 12], [11, 9], [4, 2], [10, 4]]) FIX.push({ model: 'a_lantern', ...C(cx, cy), hang: WH, R: 50, I: .8, col: AMBER });
+for (const [cx, cy] of [[18, 18], [22, 18], [20, 15], [20, 21], [14, 18], [2, 18]]) FIX.push({ model: 'a_lantern', ...C(cx, cy), hang: WH, R: 56, I: .9, col: AMBER });
+for (const [cx, cy, ox] of [[26, 9, -4], [33, 9, 4], [28, 5, 0], [32, 13, 0]]) FIX.push({ model: 'a_lamp', ...C(cx, cy, ox, -5), R: 58, I: .85, col: WARM });
+const lights = FIX.map(f => ({ x: f.x, y: f.y, R: f.R, I: f.I, col: f.col }));
+for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {            // sconces, lit windows and Tesla tubes on the walls
+  const t = tile(cx, cy), k = { L: [40, .65, WARM], X: [38, .5, WARM], T: [42, .6, COLD], Y: [42, .5, COLD] }[t];
+  if (k) for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isFloor(tile(cx + sx, cy + sy))) lights.push({ x: cx * CS + 8 + sx * 11, y: cy * CS + 8 + sy * 11, R: k[0], I: k[1], col: k[2] });
+}
+for (let j = 1; j < GH; j += 2) for (let i = 1; i < GW; i += 2) {            // the lamps painted on the flat ceilings sit where four cells meet
+  const c = [[i - 1, j - 1], [i, j - 1], [i - 1, j], [i, j]].find(([a, b]) => 'wki'.includes(tile(a, b)) || (tile(a, b) === 'm' && !vaulted(a, b)));
+  if (c) lights.push({ x: i * CS + (c[0] < i ? -1 : 1), y: j * CS + (c[1] < j ? -1 : 1), R: 60, I: .6, col: WARM });
+}
+const AMBIENT = { m: [.36, .38, .44], r: [.26, .27, .32], c: [.27, .23, .2], b: [.25, .21, .19], w: [.42, .38, .34], k: [.42, .38, .34], g: [.5, .46, .62], o: [.5, .46, .62], i: [.3, .32, .37] };
+const LS = 2, LW = SIZE / LS, LM = new Float32Array(LW * LW * 3);            // the light map: one sample every two units
+{ const ok = new Uint8Array(LW * LW);
+  for (let gy = 0; gy < LW; gy++) for (let gx = 0; gx < LW; gx++) {
+    const x = gx * LS + 1, y = gy * LS + 1, cx = x >> 4, cy = y >> 4; let t = tile(cx, cy); if (t === 'D') t = doorAt(cx, cy).floor;
+    if (!isFloor(t)) continue;
+    const a = AMBIENT[t], i = (gy * LW + gx) * 3; let r = a[0], g = a[1], b = a[2];
+    for (const l of lights) { const d = Math.hypot(l.x - x, l.y - y); if (d < l.R && canSee(l.x, l.y, x, y)) { const k = l.I * (1 - d / l.R) ** 1.5; r += l.col[0] * k; g += l.col[1] * k; b += l.col[2] * k; } }
+    LM[i] = Math.min(1.08, r); LM[i + 1] = Math.min(1.08, g); LM[i + 2] = Math.min(1.08, b); ok[gy * LW + gx] = 1;
+  }
+  for (let pass = 0; pass < 4; pass++) { const add = [];                       // spread the light a little way into the walls so smoothing does not pull darkness out of them
+    for (let gy = 1; gy < LW - 1; gy++) for (let gx = 1; gx < LW - 1; gx++) if (!ok[gy * LW + gx]) { let n = 0, r = 0, g = 0, b = 0; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const j = (gy + dy) * LW + gx + dx; if (ok[j]) { n++; r += LM[j * 3]; g += LM[j * 3 + 1]; b += LM[j * 3 + 2]; } } if (n) add.push([gy * LW + gx, r / n, g / n, b / n]); }
+    for (const [j, r, g, b] of add) { LM[j * 3] = r; LM[j * 3 + 1] = g; LM[j * 3 + 2] = b; ok[j] = 1; } }
+  const cv = mkCanvas(LW, LW), g2 = cv.getContext('2d'), img = g2.createImageData(LW, LW);
+  for (let j = 0; j < LW * LW; j++) { img.data[j * 4] = Math.min(255, LM[j * 3] * 255); img.data[j * 4 + 1] = Math.min(255, LM[j * 3 + 1] * 255); img.data[j * 4 + 2] = Math.min(255, LM[j * 3 + 2] * 255); img.data[j * 4 + 3] = 255; }
+  g2.putImageData(img, 0, 0);
+  for (const tex of [floorTex, ceilTex]) { const g = tex.getContext('2d'); g.globalCompositeOperation = 'multiply'; g.imageSmoothingEnabled = true; g.drawImage(cv, 0, 0, tex.width, tex.height); g.globalCompositeOperation = 'source-over'; }
+  for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {            // multiplying filled the holes in: cut them out again
+    let t = tile(cx, cy); if (t === 'D') t = doorAt(cx, cy).floor;
+    if (t === 'r') floorTex.getContext('2d').clearRect(cx * WV, cy * WV, WV, WV);
+    if (t === 'g' || t === 'o' || vaulted(cx, cy) || (!isFloor(t) && [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([sx, sy]) => 'goH'.includes(tile(cx + sx, cy + sy)) || vaulted(cx + sx, cy + sy)))) ceilTex.getContext('2d').clearRect(cx * WV, cy * WV, WV, WV);
+  } }
+const lightAt = (x, y) => {                                                  // the baked light at a point, smoothed between samples
+  const fx = Math.max(0, Math.min(LW - 1.001, (x - 1) / LS)), fy = Math.max(0, Math.min(LW - 1.001, (y - 1) / LS)), gx = fx | 0, gy = fy | 0, u = fx - gx, v = fy - gy, i = (gy * LW + gx) * 3, out = [0, 0, 0];
+  for (let k = 0; k < 3; k++) out[k] = (LM[i + k] * (1 - u) + LM[i + 3 + k] * u) * (1 - v) + (LM[i + LW * 3 + k] * (1 - u) + LM[i + LW * 3 + 3 + k] * u) * v;
+  return out;
+};
+for (const p of panels) { const ax = Math.cos(p.rot) * 7, ay = Math.sin(p.rot) * 7, bx = p.x + p.nx * 2, by = p.y + p.ny * 2; p.pose = { lift: p.lift, litA: lightAt(bx - ax, by - ay), litB: lightAt(bx + ax, by + ay) }; }
+for (const p of posts) p.pose = { litA: lightAt(p.x, p.y) };
+for (const e of extras) e.pose = { lift: e.lift, litA: lightAt(e.x, e.y).map(v => v * .9) };
+const HEDGE_LIT = { litA: [.62, .6, .7] };                                  // hedges are solid cells, outside the light map: give them the courtyard's dusk
+
 const ENEMY = {
   automate: { hp: 30, speed: 40, r: 5, range: 220, rate: 1.9, dmg: 6, shots: 1, shot: 'a_shot', score: 1 },
   lanterne: { hp: 18, speed: 62, r: 4, range: 180, rate: 1.0, dmg: 5, shots: 1, shot: 'a_spark', fly: 7, score: 1 },
@@ -225,31 +363,33 @@ const ENEMY = {
   colosse: { hp: 1100, speed: 30, r: 9, range: 300, rate: 1.3, dmg: 12, shots: 5, shot: 'a_shell', boss: true, score: 1 },
 };
 const WEAPONS = [
-  { name: 'PISTOLET', model: 'w_pistol', ammo: 'bullets', rate: .30, dmg: 13, pellets: 1, spread: .012, off: [13, 4.3, -7.4] },
-  { name: 'FUSIL DE CHASSE', model: 'w_shotgun', ammo: 'shells', rate: .85, dmg: 9, pellets: 8, spread: .1, off: [13, 4.0, -7.6] },
-  { name: 'MITRAILLETTE', model: 'w_smg', ammo: 'bullets', rate: .085, dmg: 10, pellets: 1, spread: .04, off: [13, 4.2, -7.6] },
-  { name: 'ARC TESLA', model: 'w_tesla', ammo: 'cells', rate: .14, dmg: 34, pellets: 1, spread: 0, pierce: true, off: [13, 4.2, -7.6] },
+  { name: 'PISTOLET', model: 'w_pistol', ammo: 'bullets', rate: .30, dmg: 13, pellets: 1, spread: .012, off: [13, 4.3, -1.55] },
+  { name: 'FUSIL DE CHASSE', model: 'w_shotgun', ammo: 'shells', rate: .85, dmg: 9, pellets: 8, spread: .1, off: [13, 4.0, -1.75] },
+  { name: 'MITRAILLETTE', model: 'w_smg', ammo: 'bullets', rate: .085, dmg: 10, pellets: 1, spread: .04, off: [13, 4.2, -1.75] },
+  { name: 'ARC TESLA', model: 'w_tesla', ammo: 'cells', rate: .14, dmg: 34, pellets: 1, spread: 0, pierce: true, off: [13, 4.2, -1.75] },
 ];
-let enemies, items, decor, shots, fx, P, state, flow, flowT, logLines, stats;
+let enemies, items, decor, shots, fx, debris, P, state, flow, flowT, logLines, stats;
 const say = t => { logLines.push({ t, life: 3.2 }); if (logLines.length > 3) logLines.shift(); };
 function reset() {
-  enemies = []; items = []; decor = []; shots = []; fx = []; logLines = [];
+  enemies = []; items = []; decor = []; shots = []; fx = []; debris = []; logLines = [];
   for (const d of doors) { d.open = 0; d.hold = 0; d.unlocked = !d.key; }
   const E = (type, cx, cy, ox, oy) => enemies.push({ type, ...C(cx, cy, ox, oy), ...ENEMY[type], yaw: 0, awake: false, cool: 1 + rnd(), t: rnd() * 5, seeT: rnd() * .2, see: false, flash: 0, atk: 0, strafe: rnd() < .5 ? 1 : -1 });
   const I = (kind, cx, cy, ox, oy) => items.push({ kind, ...C(cx, cy, ox, oy) });
   const D = (model, cx, cy, ox = 0, oy = 0, o = {}) => decor.push({ model, ...C(cx, cy, ox, oy), r: 4, solid: true, rot: 0, ...o });
+  for (const f of FIX) decor.push({ model: f.model, x: f.x, y: f.y, r: 2, solid: !f.hang, rot: 0, lift: f.hang ? f.hang - MODEL_DEFS[f.model].H * VOX : 0 });   // hanging lamps are out of reach
   // Metro
-  E('automate', 10, 26); E('automate', 13, 27); I('bullets', 6, 27); I('baguette', 12, 29); D('a_lamp', 4, 26, 0, -5, { r: 2 }); D('a_lamp', 11, 26, 0, -5, { r: 2 }); D('a_crate', 14, 29);
-  E('automate', 6, 18); E('automate', 10, 19); I('baguette', 11, 17); D('a_lamp', 5, 17, -3, -3, { r: 2 });
+  E('automate', 10, 26); E('automate', 13, 27); I('bullets', 6, 27); I('baguette', 12, 27); D('a_crate', 14, 26, 2, -2);
+  for (const cx of [3, 5, 11, 13]) D('a_bench', cx, 26, 0, -5, { r: 5 }); D('a_bin', 7, 26, 4, -5, { r: 2 }); D('a_bin', 9, 26, -4, -5, { r: 2 }); D('a_signal', 1, 27, -4, 6, { r: 1.5 }); D('a_signal', 14, 27, 4, 6, { r: 1.5 });
+  E('automate', 6, 18); E('automate', 10, 19); I('baguette', 11, 17); D('a_bench', 8, 20, 12, 5, { r: 5 });
   I('shotgun', 2, 17); I('shells', 1, 20); I('shells', 3, 20); E('automate', 2, 19); D('a_crate', 1, 16); D('a_crate', 3, 16, 0, 0, { rot: .4 });
   // catacombs
   E('automate', 8, 13); E('lanterne', 5, 12); E('automate', 2, 9); E('lanterne', 2, 6); E('automate', 4, 2); E('automate', 6, 3); E('lanterne', 6, 8); E('automate', 11, 8);
-  I('key_blue', 3, 1); I('baguette', 7, 1); I('shells', 5, 9); I('bullets', 8, 10); I('helmet', 10, 4); I('wine', 11, 5); D('a_lamp', 7, 4, 3, 3, { r: 2 }); D('a_lamp', 8, 7, 3, -3, { r: 2 });
+  I('key_blue', 3, 1); I('baguette', 7, 1); I('shells', 5, 9); I('bullets', 8, 10); I('helmet', 10, 4); I('wine', 11, 5);
   // wine cellar
   E('scaphandre', 20, 18); E('automate', 17, 15); E('automate', 23, 21); E('automate', 23, 15); E('lanterne', 20, 21);
   for (const [x, y] of [[16, 14], [24, 14], [16, 22], [24, 22], [19, 14]]) D('a_cask', x, y, 0, 0, { r: 6 });
   for (const [x, y] of [[20, 16], [17, 19], [23, 18], [21, 20]]) D('a_drum', x, y, 0, 0, { drum: true, hp: 12 });
-  I('bullets', 16, 18); I('baguette', 24, 18); I('shells', 20, 22); D('a_lamp', 20, 14, 0, -4, { r: 2 });
+  I('bullets', 16, 18); I('baguette', 24, 18); I('shells', 20, 22);
   // chateau
   E('automate', 17, 8); E('automate', 23, 8); E('automate', 20, 7); E('lanterne', 18, 11); E('lanterne', 22, 11); E('scaphandre', 20, 10);
   for (const [x, y] of [[18, 7], [22, 7], [18, 11], [22, 11]]) D('a_column', x, y);
@@ -257,13 +397,13 @@ function reset() {
   D('a_table', 22, 2, 0, 0, { r: 6 }); I('key_red', 24, 1); E('scaphandre', 23, 3); I('wine', 21, 4); I('helmet', 24, 4);
   // courtyard
   E('lanterne', 27, 5); E('lanterne', 32, 8); E('lanterne', 29, 13); E('lanterne', 33, 13); E('automate', 30, 6); E('automate', 27, 10); E('automate', 33, 10);
-  D('fountain', 30, 9, 0, 0, { r: 9 }); I('tesla', 33, 4); I('cells', 32, 4); I('cells', 26, 14); I('wine', 26, 4); I('shells', 33, 14); D('a_lamp', 26, 9, -4, -5, { r: 2 }); D('a_lamp', 33, 9, 4, -5, { r: 2 });
+  D('fountain', 30, 9, 0, 0, { r: 9 }); I('tesla', 33, 4); I('cells', 32, 4); I('cells', 26, 14); I('wine', 26, 4); I('shells', 33, 14);
   // workshop and exit
   E('colosse', 30, 20); E('scaphandre', 27, 23); E('scaphandre', 33, 23); E('automate', 26, 17); E('automate', 33, 17);
   for (const [x, y] of [[26, 20], [33, 20], [29, 24], [31, 24]]) D('a_drum', x, y, 0, 0, { drum: true, hp: 12 });
   I('cells', 26, 16); I('cells', 33, 16); I('wine', 30, 17); I('baguette', 26, 24); I('baguette', 33, 24); I('bullets', 29, 16);
   decor.push({ model: 'a_exit', ...C(30, 25, 0, 3), r: 5, solid: true, rot: Math.PI, exit: true });
-  P = { ...C(2, 26), yaw: 0, vx: 0, vy: 0, hp: 100, armour: 0, ammo: { bullets: 50, shells: 0, cells: 0 }, has: [true, false, false, false], weapon: 0, cool: 0, kick: 0, flash: 0, bob: 0, keys: {}, pain: 0, dead: false, grin: 0 };
+  P = { ...C(2, 26), yaw: 0, vx: 0, vy: 0, hp: 100, armour: 0, ammo: { bullets: 50, shells: 0, cells: 0 }, has: [true, false, false, false], weapon: 0, cool: 0, kick: 0, shake: 0, flash: 0, bob: 0, keys: {}, pain: 0, dead: false, grin: 0 };
   stats = { kills: 0, total: enemies.length, time: 0 };
   flow = null; flowT = 0;
 }
@@ -290,7 +430,7 @@ function rayWall(x, y, a, max) {                                    // distance 
 }
 function canSee(ax, ay, bx, by) { const d = Math.hypot(bx - ax, by - ay); return rayWall(ax, ay, Math.atan2(by - ay, bx - ax), d) >= d - 2; }
 function moveBody(b, dx, dy, r, others) {
-  const blocked = (x, y) => boxHits(x, y, r) || decor.some(d => d.solid && !d.gone && Math.hypot(d.x - x, d.y - y) < d.r + r) || (others && others.some(o => o !== b && !o.dead && Math.hypot(o.x - x, o.y - y) < o.r + r));
+  const blocked = (x, y) => boxHits(x, y, r) || inPit(x - r, y - r) || inPit(x + r, y - r) || inPit(x - r, y + r) || inPit(x + r, y + r) || decor.some(d => d.solid && !d.gone && Math.hypot(d.x - x, d.y - y) < d.r + r) || (others && others.some(o => o !== b && !o.dead && Math.hypot(o.x - x, o.y - y) < o.r + r));
   let moved = false;
   if (dx && !blocked(b.x + dx, b.y)) { b.x += dx; moved = true; }
   if (dy && !blocked(b.x, b.y + dy)) { b.y += dy; moved = true; }
@@ -298,26 +438,43 @@ function moveBody(b, dx, dy, r, others) {
 }
 function computeFlow() {                                            // steps to the player from every cell, through doors enemies can use
   const f = new Int16Array(GW * GH).fill(999), px = Math.floor(P.x / CS), py = Math.floor(P.y / CS), q = [[px, py]]; f[px + py * GW] = 0;
-  while (q.length) { const [x, y] = q.shift(), d = f[x + y * GW]; for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + a, ny = y + b, t = tile(nx, ny); if (!isFloor(t) || (t === 'D' && !doorAt(nx, ny).unlocked) || f[nx + ny * GW] <= d + 1) continue; f[nx + ny * GW] = d + 1; q.push([nx, ny]); } }
+  while (q.length) { const [x, y] = q.shift(), d = f[x + y * GW]; for (const [a, b] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + a, ny = y + b, t = tile(nx, ny); if (!isFloor(t) || t === 'r' || (t === 'D' && !doorAt(nx, ny).unlocked) || f[nx + ny * GW] <= d + 1) continue; f[nx + ny * GW] = d + 1; q.push([nx, ny]); } }
   return f;
 }
-function burst(x, y, lift, n, model) { for (let i = 0; i < n; i++) { const a = Math.random() * 6.28, s = 20 + Math.random() * 50; fx.push({ model, x, y, lift, vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: 20 + Math.random() * 40, t: 0, life: .35 + Math.random() * .3 }); } }
+// Particles: `g` is gravity, `bounce` lets one skip off the floor, `stay` leaves it lying where it lands.
+const rand = (a, b) => a + Math.random() * (b - a);
+const spawn = (model, x, y, lift, o) => fx.push({ model, x, y, lift, vx: 0, vy: 0, vz: 0, t: 0, life: .5, a: Math.random() * 6.28, spin: 0, g: 0, ...o });
+const litter = (model, x, y, lift = .06) => { debris.push({ model, x, y, lift, rot: Math.random() * 6.28 }); if (debris.length > 220) debris.shift(); };
+function burst(x, y, lift, n, model) { for (let i = 0; i < n; i++) { const a = Math.random() * 6.28, s = rand(20, 70); spawn(model, x, y, lift, { vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: rand(20, 60), g: 160, life: rand(.35, .65) }); } }
+function sparks(x, y, lift, n, dir, spread = 2.6) {                             // a shower of sparks, thrown mostly along `dir`
+  for (let i = 0; i < n; i++) { const a = dir == null ? Math.random() * 6.28 : dir + rand(-spread, spread) / 2, s = rand(25, 120); spawn(Math.random() < .65 ? 'a_sparkle' : 'a_ember', x, y, lift, { vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: rand(-10, 80), g: 240, bounce: true, life: rand(.25, .7) }); }
+}
+function oil(x, y, lift, n, dir) { for (let i = 0; i < n; i++) { const a = dir + rand(-.7, .7), s = rand(20, 75); spawn('a_oil', x, y, lift, { vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: rand(10, 60), g: 220, life: rand(.4, .8) }); } }
+function smoke(x, y, lift, n) { for (let i = 0; i < n; i++) spawn(Math.random() < .5 ? 'a_puff1' : 'a_puff2', x + rand(-3, 3), y + rand(-3, 3), lift + rand(0, 4), { vx: rand(-5, 5), vy: rand(-5, 5), vz: rand(8, 22), life: rand(.6, 1.4), spin: rand(-2, 2) }); }
+function wreck(e, fx0, fy0) {                                                   // the machine flies apart: every chunk tumbles, bounces and stays where it lands
+  const away = Math.atan2(e.y - fy0, e.x - fx0), rx = Math.sin(e.yaw), ry = -Math.cos(e.yaw);
+  for (const g of GIBS[e.type]) { const a = away + rand(-1.3, 1.3), s = rand(20, 95); spawn(g.name, e.x + rx * g.dx, e.y + ry * g.dx, (e.fly || 0) + g.dz, { a: e.yaw - Math.PI / 2, vx: Math.cos(a) * s, vy: Math.sin(a) * s, vz: rand(25, 95), g: 210, bounce: true, spin: rand(-9, 9), life: rand(1.4, 2.6), stay: true }); }
+  sparks(e.x, e.y, 8 + (e.fly || 0), e.boss ? 60 : 26); oil(e.x, e.y, 9 + (e.fly || 0), e.boss ? 30 : 12, away); smoke(e.x, e.y, 4, e.boss ? 12 : 5);
+  if (!inPit(e.x, e.y)) litter('a_pool', e.x, e.y);
+}
 function hurtPlayer(d) {
   if (P.dead) return;
-  const soak = Math.min(P.armour, d * 0.5); P.armour -= soak; P.hp -= d - soak; P.pain = Math.min(.6, P.pain + d * 0.03); sfx('hurt');
+  const soak = Math.min(P.armour, d * 0.5); P.armour -= soak; P.hp -= d - soak; P.pain = Math.min(.6, P.pain + d * 0.03); P.shake = Math.max(P.shake, .5); sfx('hurt');
   if (P.hp <= 0) { P.hp = 0; P.dead = true; state = 'dead'; showScreen(); }
 }
 function explode(x, y) {
-  sfx('boom'); burst(x, y, 6, 14, 'a_smoke');
+  sfx('boom'); burst(x, y, 6, 14, 'a_smoke'); sparks(x, y, 5, 34); smoke(x, y, 3, 9); litter('a_scorch', x, y, .05);
+  P.shake = Math.max(P.shake, 2.2 * Math.max(0, 1 - Math.hypot(P.x - x, P.y - y) / 160));
   for (const e of enemies) if (!e.dead) { const d = Math.hypot(e.x - x, e.y - y); if (d < 46) hurtEnemy(e, 90 * (1 - d / 50), x, y); }
   for (const d of decor) if (d.drum && !d.gone && Math.hypot(d.x - x, d.y - y) < 40) { d.hp = 0; d.fuse = .15; }
   const pd = Math.hypot(P.x - x, P.y - y); if (pd < 46) hurtPlayer(55 * (1 - pd / 50));
 }
 function hurtEnemy(e, dmg, fx0, fy0) {
   if (e.dead) return;
-  e.hp -= dmg; e.flash = .1; e.awake = true; burst(e.x, e.y, 8 + (e.fly || 0), 2, 'a_bit');
+  const back = Math.atan2(fy0 - e.y, fx0 - e.x), hx = e.x + Math.cos(back) * e.r * .7, hy = e.y + Math.sin(back) * e.r * .7, hz = rand(5, 13) + (e.fly ? e.fly - 4 : 0);   // where the shot struck, on the side facing the gun
+  e.hp -= dmg; e.flash = .1; e.awake = true; sparks(hx, hy, hz, 5 + (dmg > 20 ? 5 : 0), back, 1.8); oil(hx, hy, hz, 2, back); burst(hx, hy, hz, 1, 'a_bit');
   if (e.hp > 0) { sfx('hit'); return; }
-  e.dead = true; stats.kills++; sfx('die'); burst(e.x, e.y, 8, 8, 'a_bit');
+  e.dead = true; stats.kills++; sfx('die'); wreck(e, fx0, fy0); P.shake = Math.max(P.shake, e.boss ? 2 : .35);
   const a = Math.atan2(e.y - fy0, e.x - fx0); e.fall = { dx: Math.cos(a), dy: Math.sin(a), a: 0, t: 0 };
   if (e.type === 'automate' && Math.random() < .45) items.push({ kind: 'bullets', x: e.x, y: e.y, small: true });
   if (e.boss) { say('Le Colosse is scrap. Find the lever!'); for (let i = 0; i < 4; i++) setTimeout(() => explode(e.x + (Math.random() - .5) * 20, e.y + (Math.random() - .5) * 20), i * 220); }
@@ -326,7 +483,7 @@ function fire() {
   const w = WEAPONS[P.weapon];
   if (P.cool > 0 || P.dead) return;
   if (P.ammo[w.ammo] <= 0) { P.cool = .25; sfx('click'); const alt = [3, 2, 1, 0].find(i => P.has[i] && P.ammo[WEAPONS[i].ammo] > 0); if (alt != null) P.weapon = alt; return; }
-  P.ammo[w.ammo]--; P.cool = w.rate; P.kick = 1; P.flash = .06; sfx(['pistol', 'shotgun', 'smg', 'tesla'][P.weapon]);
+  P.ammo[w.ammo]--; P.cool = w.rate; P.kick = 1; P.flash = .06; P.shake = Math.max(P.shake, P.weapon === 1 ? .7 : .15); sfx(['pistol', 'shotgun', 'smg', 'tesla'][P.weapon]);
   for (const e of enemies) if (!e.dead && Math.hypot(e.x - P.x, e.y - P.y) < 260) e.awake = true;       // gunfire wakes the neighbourhood
   for (let p = 0; p < w.pellets; p++) {
     const a = P.yaw + (Math.random() - .5) * 2 * w.spread, dx = Math.cos(a), dy = Math.sin(a), wall = rayWall(P.x, P.y, a, 400);
@@ -343,7 +500,7 @@ function fire() {
       if (!w.pierce) { end = along; break; }
     }
     if (w.pierce) for (let d = 10; d < end; d += 9) fx.push({ model: 'a_bolt', x: P.x + dx * d, y: P.y + dy * d, lift: 7 + Math.random() * 2, vx: 0, vy: 0, vz: 0, t: 0, life: .09, rot: a - Math.PI / 2 });
-    else burst(P.x + dx * (end - 2), P.y + dy * (end - 2), 6 + Math.random() * 5, 1, end < wall ? 'a_bit' : 'a_smoke');
+    else if (end >= wall) { const ix = P.x + dx * (end - 1.2), iy = P.y + dy * (end - 1.2), iz = FP.eye - 2 + rand(-3, 3); sparks(ix, iy, iz, 5, a + Math.PI, 2); smoke(ix, iy, iz, 1); if (!inPit(ix, iy)) litter('a_hole', P.x + dx * (end - .4), P.y + dy * (end - .4), iz); }   // the wall chips, sparks and keeps the mark
   }
 }
 const PICK = {
@@ -369,7 +526,7 @@ function update(dt) {
   const wx = (Math.cos(P.yaw) * f - Math.sin(P.yaw) * s) / l * 125, wy = (Math.sin(P.yaw) * f + Math.cos(P.yaw) * s) / l * 125;
   P.vx += (wx - P.vx) * Math.min(1, 10 * dt); P.vy += (wy - P.vy) * Math.min(1, 10 * dt);
   moveBody(P, P.vx * dt, P.vy * dt, 4.5, enemies);
-  P.bob += Math.hypot(P.vx, P.vy) * dt * 0.09; P.cool -= dt; P.kick = Math.max(0, P.kick - dt * 5); P.flash -= dt; P.pain = Math.max(0, P.pain - dt * 0.9); P.grin -= dt;
+  P.bob += Math.hypot(P.vx, P.vy) * dt * 0.09; P.cool -= dt; P.kick = Math.max(0, P.kick - dt * 5); P.shake = Math.max(0, P.shake - dt * 4); P.flash -= dt; P.pain = Math.max(0, P.pain - dt * 0.9); P.grin -= dt;
   if (k[' '] || k.control || k.fire) fire();
   // doors slide open for the player (with the right key) and for enemies that are hunting
   for (const d of doors) {
@@ -383,7 +540,7 @@ function update(dt) {
   }
   flowT -= dt; if (flowT <= 0 || !flow) { flow = computeFlow(); flowT = .3; }
   for (const e of enemies) {
-    if (e.dead) { e.fall.t += dt; e.fall.a = 1.5 * Math.min(1, Math.pow(e.fall.t / .4, 2)); continue; }
+    if (e.dead) continue;
     e.flash -= dt; e.atk -= dt; e.t += dt;
     const dx = P.x - e.x, dy = P.y - e.y, dist = Math.hypot(dx, dy);
     e.seeT -= dt; if (e.seeT <= 0) { e.seeT = .18; e.see = dist < 320 && canSee(e.x, e.y, P.x, P.y); }
@@ -408,11 +565,20 @@ function update(dt) {
   }
   for (let i = shots.length - 1; i >= 0; i--) {
     const s2 = shots[i]; s2.t += dt; s2.x += s2.vx * dt; s2.y += s2.vy * dt;
-    if (solidAtPt(s2.x, s2.y) || s2.t > 5) { burst(s2.x - s2.vx * dt, s2.y - s2.vy * dt, s2.lift, 1, 'a_bit'); shots.splice(i, 1); }
+    if (solidAtPt(s2.x, s2.y) || s2.t > 5) { sparks(s2.x - s2.vx * dt, s2.y - s2.vy * dt, s2.lift, 4, Math.atan2(-s2.vy, -s2.vx), 2); shots.splice(i, 1); }
     else if (Math.hypot(s2.x - P.x, s2.y - P.y) < 5) { hurtPlayer(s2.dmg); shots.splice(i, 1); }
   }
   for (const d of decor) if (d.fuse != null && !d.gone) { d.fuse -= dt; if (d.fuse <= 0) { d.gone = true; explode(d.x, d.y); } }
-  for (let i = fx.length - 1; i >= 0; i--) { const p = fx[i]; p.t += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vz -= 160 * dt * (p.vz !== 0); p.lift = Math.max(0.5, p.lift + p.vz * dt); if (p.t > p.life) fx.splice(i, 1); }
+  for (let i = fx.length - 1; i >= 0; i--) {
+    const p = fx[i], nx = p.x + p.vx * dt, ny = p.y + p.vy * dt; p.t += dt;
+    if (solidAtPt(nx, ny)) { p.vx *= -.4; p.vy *= -.4; } else { p.x = nx; p.y = ny; }                    // off the walls
+    if (p.g && !p.rest) {
+      const floor = (inPit(p.x, p.y) ? -PIT : 0) + .1; p.vz -= p.g * dt; p.lift += p.vz * dt;
+      if (p.lift <= floor) { p.lift = floor; if (p.bounce && p.vz < -30) { p.vz *= -.38; p.vx *= .55; p.vy *= .55; p.spin *= .6; } else { p.rest = true; p.vx = p.vy = p.vz = 0; } }
+    } else if (!p.g) p.lift += p.vz * dt;
+    if (!p.rest) p.a += p.spin * dt;
+    if (p.t > p.life) { if (p.stay) { debris.push({ model: p.model, x: p.x, y: p.y, lift: p.lift, rot: p.a }); if (debris.length > 220) debris.shift(); } fx.splice(i, 1); }
+  }
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]; if (Math.hypot(it.x - P.x, it.y - P.y) > 9) continue;
     const msg = PICK[it.kind].get(it); if (!msg) continue;
@@ -428,33 +594,35 @@ const scene = document.getElementById('scene'), R = Renderer(scene, SIZE), OPT =
 const cam0 = { x: 0, y: 0, a: 0 };
 function render(now) {
   if (!R) { $('stats').textContent = 'WebGL is not available in this browser.'; return; }
-  const W = scene.width, H = scene.height, eye = { x: P.x, y: P.y, yaw: P.yaw }, fxv = Math.cos(P.yaw), fyv = Math.sin(P.yaw);
-  R.begin(1, W / 2, H / 2, [.29, .22, .47], eye, true);                 // the clear colour is the dusk sky over the courtyard; indoors it is never seen
+  const W = scene.width, H = scene.height, sh = P.shake || 0, eye = { x: P.x + (Math.random() - .5) * sh, y: P.y + (Math.random() - .5) * sh, yaw: P.yaw + (Math.random() - .5) * sh * .012 }, fxv = Math.cos(P.yaw), fyv = Math.sin(P.yaw);
+  R.begin(1, W / 2, H / 2, 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))) ? [.29, .22, .47] : [.05, .045, .06], eye, true);   // the background is the dusk sky out in the courtyard, and near-black indoors where only hairline seams could show it
   R.ground(floorTex, cam0, 0); R.ground(ceilTex, cam0, WH);
   let n = 0;
   const vis = (x, y, r) => { const ex = x - P.x, ey = y - P.y, f = ex * fxv + ey * fyv; return f > -r && f < FP.far + r && Math.abs(ey * fxv - ex * fyv) < f * 0.9 + r + 8; };
-  const draw = (name, x, y, rot, pose, o) => { if (vis(x, y, 12)) { R.draw(mesh(name), x, y, rot, cam0, MODEL_DEFS[name].o || o || OPT, null, pose); n++; } };
-  for (const p of panels) if ((P.x - p.x) * p.nx + (P.y - p.y) * p.ny > 0 && vis(p.x, p.y, 12)) { const far = (P.x - p.x) ** 2 + (P.y - p.y) ** 2 > 130 * 130; R.draw(far ? p.far : p.m, p.x, p.y, p.rot, cam0, far ? FAR_O : WO); n++; }   // only the sides that face the player; coarse ones in the distance
-  for (const p of posts) if (vis(p.x, p.y, 2)) { R.draw(p.m, p.x, p.y, 0, cam0, WO); n++; }
-  for (const h of hedges) draw('hedge', h.x, h.y, 0);
+  const draw = (name, x, y, rot, pose, o) => { if (!vis(x, y, 12)) return; const d = MODEL_DEFS[name]; R.draw(mesh(name), x, y, rot, cam0, d.o || o || OPT, null, d.bright ? pose : { litA: lightAt(x, y), ...pose }); n++; };
+  for (const p of panels) if ((P.x - p.x) * p.nx + (P.y - p.y) * p.ny > 0 && vis(p.x, p.y, 12)) { const far = p.far && (P.x - p.x) ** 2 + (P.y - p.y) ** 2 > 130 * 130; R.draw(far ? p.far : p.m, p.x, p.y, p.rot, cam0, far ? FAR_O : WO, null, p.pose); n++; }   // only the sides that face the player; coarse ones in the distance
+  for (const p of posts) if (vis(p.x, p.y, 2)) { R.draw(p.m, p.x, p.y, 0, cam0, WO, null, p.pose); n++; }
+  for (const e of extras) if (vis(e.x, e.y, e.r)) { R.draw(e.m, e.x, e.y, 0, cam0, VO, null, e.pose); n++; }                 // the track and the vault
+  for (const h of hedges) draw('hedge', h.x, h.y, 0, HEDGE_LIT);
   for (const d of doors) { const s = d.open * 14, name = d.key ? 'a_door_' + d.key : 'a_door'; draw(name, d.x + (d.vertical ? s : 0), d.y + (d.vertical ? 0 : s), d.vertical ? 0 : Math.PI / 2); }
-  for (const d of decor) if (!d.gone) draw(d.model, d.x, d.y, d.rot);
+  for (const d of decor) if (!d.gone) draw(d.model, d.x, d.y, d.rot, d.lift ? { lift: d.lift } : null);
   for (const it of items) draw(PICK[it.kind].model, it.x, it.y, now * 0.002, { lift: 3 + Math.sin(now * 0.004 + it.x) * 1.2 }, NOSHADE);
-  for (const e of enemies) {
-    const frame = e.dead ? 'w' : e.type === 'lanterne' ? ((now / 60 | 0) & 1 ? 'w' : 'b') : e.atk > 0 ? 'a' : (e.t * 4 | 0) & 1 && e.awake ? 'b' : 'w';
-    draw(`${e.type}_${frame}`, e.x, e.y, e.yaw - Math.PI / 2, e.dead ? { ...e.fall, lift: 0 } : { lift: e.fly ? e.fly + Math.sin(e.t * 3) * 1.5 : 0, flash: e.flash > 0 ? 0.8 : 0 });
+  for (const e of enemies) if (!e.dead) {                              // a destroyed machine is only wreckage now
+    const frame = !e.awake ? 'i' : e.atk > 0 ? 'a' : (e.type === 'lanterne' ? now / 60 : e.t * 4) & 1 ? 'b' : 'w';
+    draw(`${e.type}_${frame}`, e.x, e.y, e.yaw - Math.PI / 2, { lift: e.fly ? e.fly + Math.sin(e.t * 3) * 1.5 : 0, flash: e.flash > 0 ? 0.8 : 0 });
   }
+  for (const d of debris) draw(d.model, d.x, d.y, d.rot, { lift: d.lift });
   for (const s of shots) draw(s.model, s.x, s.y, Math.atan2(s.vy, s.vx) - Math.PI / 2, { lift: s.lift }, NOSHADE);
-  for (const p of fx) draw(p.model, p.x, p.y, p.rot != null ? p.rot : p.t * 9, { lift: p.lift }, NOSHADE);
+  for (const p of fx) draw(p.model, p.x, p.y, p.rot != null ? p.rot : p.a, { lift: p.lift }, NOSHADE);
   // the weapon is drawn last over a cleared depth buffer so it never pokes into walls
   if (!P.dead) {
     R.clearDepth();
     const w = WEAPONS[P.weapon], sway = Math.sin(P.bob) * 0.7, back = P.kick * 1.2, o = w.off;
-    const wx = P.x + fxv * (o[0] - back) - fyv * (o[1] + sway), wy = P.y + fyv * (o[0] - back) + fxv * (o[1] + sway), lift = FP.eye + o[2] + Math.abs(Math.cos(P.bob)) * 0.5 + P.kick * 0.8;
-    R.draw(mesh(w.model), wx, wy, P.yaw - Math.PI / 2, cam0, MODEL_DEFS[w.model].o, null, { lift });
+    const wx = P.x + fxv * (o[0] - back) - fyv * (o[1] + sway), wy = P.y + fyv * (o[0] - back) + fxv * (o[1] + sway), lift = FP.eye - o[0] * (H / 2 / FP.focal) + o[2] + Math.abs(Math.cos(P.bob)) * 0.5 + P.kick * 0.8;
+    R.draw(mesh(w.model), wx, wy, P.yaw - Math.PI / 2, cam0, MODEL_DEFS[w.model].o, null, { lift, litA: lightAt(P.x, P.y).map(v => Math.max(.5, v)) });
     if (P.flash > 0 && P.weapon !== 3) R.draw(mesh('w_flash'), wx + fxv * .6, wy + fyv * .6, P.yaw - Math.PI / 2, cam0, MODEL_DEFS.w_flash.o, null, { lift: lift + MODEL_DEFS[w.model].H * WEAPON_VOX - 1.2 });
   }
-  R.end();
+  R.end(1.1);                                                           // glowing voxels bloom
   $('stats').textContent = `${n} draws, ${Math.round(R.stats.tris / 1000)}k triangles.`;
   // status bar
   const w = WEAPONS[P.weapon];
@@ -480,13 +648,14 @@ function drawFace(now) {                                              // the her
   if (hp < 45) { px(15, 8, 2, 3, RED); px(16, 11, 1, 3, RED); }
   if (hp < 20) { px(14, 8, 1, 2, RED); px(16, 14, 1, 4, RED); px(7, 13, 1, 3, RED); px(15, 19, 1, 2, '#8a1010'); }
 }
+const HELP = '<p class="keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move and strafe &middot; mouse or <kbd>&larr;</kbd><kbd>&rarr;</kbd> turn &middot; click or <kbd>Space</kbd> fire &middot; <kbd>1</kbd>&ndash;<kbd>4</kbd> weapons &middot; <kbd>R</kbd> restart &middot; <kbd>M</kbd> mute. Doors open when you walk up to them.</p>';
 function showScreen() {
   const el = $('screen'), t = Math.round(stats.time), mm = `${t / 60 | 0}:${String(t % 60).padStart(2, '0')}`;
   el.style.display = state === 'play' ? 'none' : 'flex';
-  el.innerHTML = state === 'title' ? `<h2>LES AUTOMATES</h2><p><b>Paris, 1934.</b> Baron Mécanique's clockwork gendarmes have marched out of his château and into the Métro. You are the only inspector still on duty.</p><p>Find the <b>blue</b> and <b>red</b> keys, cross the catacombs, the wine cellar and the château, and pull the lever in his workshop.</p><p><b>Click or tap to start</b></p>`
+  el.innerHTML = state === 'title' ? `<h2>LES AUTOMATES</h2><p><b>Paris, 1934.</b> Baron Mécanique's clockwork gendarmes have marched out of his château and into the Métro. You are the only inspector still on duty.</p><p>Find the <b>blue</b> and <b>red</b> keys, cross the catacombs, the wine cellar and the château, and pull the lever in his workshop.</p><p><b>Click or tap to start</b></p>${HELP}`
     : state === 'dead' ? `<h2>VOUS ÊTES MORT</h2><p>The automates march on. ${stats.kills} of ${stats.total} destroyed.</p><p><b>Click, tap or press R to try again</b></p>`
     : state === 'won' ? `<h2>VIVE LA RÉPUBLIQUE&nbsp;!</h2><p>The lever drops and every automate in Paris winds down.</p><p>Automates destroyed: <b>${stats.kills} / ${stats.total}</b> &middot; Time: <b>${mm}</b></p><p><b>Click, tap or press R to play again</b></p>`
-    : `<h2>PAUSE</h2><p><b>Click or tap to continue</b></p>`;
+    : `<h2>PAUSE</h2><p><b>Click or tap to continue</b></p>${HELP}`;
 }
 
 // ---------- input + loop ----------

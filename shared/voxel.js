@@ -19,7 +19,7 @@ function buildMesh(d) {
     for (const [n, ...q] of FACES) {
       if (at(x + n[0], y + n[1], z + n[2]) != null) continue;
       for (const i of [0, 1, 2, 0, 2, 3]) // x,y centred on the model; z is the corner (0/1) and the layer travels separately so it can be exploded
-        (n[2] ? [v, top] : [v]).forEach(out => out.push(x + q[i][0] - W / 2, y + q[i][1] - L / 2, q[i][2], z, (c >> 16 & 255) / 255, (c >> 8 & 255) / 255, (c & 255) / 255, n[0], n[1], n[2]));
+        (n[2] ? [v, top] : [v]).forEach(out => out.push(x + q[i][0] - W / 2, y + q[i][1] - L / 2, q[i][2], z, (c >> 16 & 255) / 255 + (c > 0xffffff ? 2 : 0), (c >> 8 & 255) / 255, (c & 255) / 255, n[0], n[1], n[2]));
     }
   }
   return { ...d, data: new Float32Array(v), count: v.length / 10, top: new Float32Array(top), topCount: top.length / 10, voxels }; // `top` alone is enough to cast the shadow
@@ -35,12 +35,12 @@ vec4 persp(vec2 world, float height, vec4 view) {
   return vec4((d.y * c - d.x * s) * u_proj.x / (view.x * 0.5), (height - u_eye.w) * u_proj.x / (view.y * 0.5),
               (f * (u_proj.z + u_proj.y) - 2.0 * u_proj.z * u_proj.y) / (u_proj.z - u_proj.y), f);
 }`;
-const FOG = `uniform vec4 u_fog; vec3 fog(vec3 c, float dist) { return mix(c, u_fog.rgb, clamp((dist - u_fog.a) / (${FP.far.toFixed(1)} - u_fog.a), 0.0, 1.0)); }`;
+const FOG = `uniform vec4 u_fog; float fogk(float dist) { return clamp((dist - u_fog.a) / (${FP.far.toFixed(1)} - u_fog.a), 0.0, 1.0); } vec3 fog(vec3 c, float dist) { return mix(c, u_fog.rgb, fogk(dist)); }`;
 const VS = `
 attribute vec3 a_pos; attribute float a_layer; attribute vec3 a_color; attribute vec3 a_normal;
 uniform vec2 u_obj; uniform float u_rot; uniform vec3 u_cam; uniform vec2 u_pitch; uniform vec4 u_view;
-uniform float u_scale, u_explode, u_zscale, u_H, u_flat, u_light, u_shade, u_vox; uniform vec2 u_shift; uniform vec3 u_fall; uniform float u_lift, u_flash; // fall: direction x,y + angle; lift: height above the ground
-varying vec3 v_color; varying float v_dist;` + PROJ + `
+uniform float u_scale, u_explode, u_zscale, u_H, u_flat, u_light, u_shade, u_vox; uniform vec3 u_litA, u_litB; uniform vec2 u_shift; uniform vec3 u_fall; uniform float u_lift, u_flash; // fall: direction x,y + angle; lift: height above the ground
+varying vec3 v_color; varying float v_dist, v_em;` + PROJ + `
 vec2 rot(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(p.x * c - p.y * s, p.x * s + p.y * c); }
 void main() {
   float raw = (a_layer * u_explode + a_pos.z) * u_zscale;             // height before a knocked-over object tips
@@ -59,10 +59,12 @@ void main() {
   float side = 0.55 + 0.35 * max(0.0, dot(n, normalize(vec2(-0.5, 0.85))));
   float k = mix(1.0, a_normal.z > 0.5 ? 1.0 : side, u_light);
   k *= mix(1.0, 0.62 + 0.38 * a_layer / max(1.0, u_H - 1.0), u_shade);
-  v_color = mix(a_color * k, vec3(1.0), u_flash);
+  v_em = step(1.5, a_color.r);                                         // a red channel above 1 marks a voxel that glows: it ignores the light and feeds the glow pass
+  vec3 lit = mix(u_litA, u_litB, clamp(a_pos.x * u_vox / 16.0 + 0.5, 0.0, 1.0));
+  v_color = mix((a_color - vec3(2.0 * v_em, 0.0, 0.0)) * k * mix(lit, vec3(1.0), v_em), vec3(1.0), u_flash);
 }`;
-const FS = `precision mediump float; varying vec3 v_color; varying float v_dist; uniform vec4 u_tint;` + FOG + `
-void main() { bool sh = u_tint.a > 0.0; gl_FragColor = vec4(fog(sh ? u_tint.rgb : v_color, v_dist), sh ? u_tint.a : 1.0); }`;
+const FS = `precision mediump float; varying vec3 v_color; varying float v_dist, v_em; uniform vec4 u_tint;` + FOG + `
+void main() { bool sh = u_tint.a > 0.0; gl_FragColor = vec4(fog(sh ? u_tint.rgb : v_color, v_dist), sh ? u_tint.a : v_em * (1.0 - fogk(v_dist))); }`;   // alpha carries the glow mask
 const GVS = `
 attribute vec2 a_p; uniform vec3 u_cam; uniform vec2 u_pitch; uniform vec4 u_view; uniform float u_world, u_height; varying vec2 v_uv; varying float v_dist;` + PROJ + `
 void main() {
@@ -76,8 +78,9 @@ void main() {
   v_uv = a_p / u_world;
 }`;
 const GFS = `precision mediump float; varying vec2 v_uv; varying float v_dist; uniform sampler2D u_tex;` + FOG + `
-void main() { vec4 t = texture2D(u_tex, v_uv); if (t.a < 0.5) discard; gl_FragColor = vec4(fog(t.rgb, v_dist), 1.0); }`;
+void main() { vec4 t = texture2D(u_tex, v_uv); if (t.a < 0.5) discard; gl_FragColor = vec4(fog(t.rgb, v_dist), 0.0); }`;
 
+const WHITE = [1, 1, 1];
 function Renderer(canvas, worldSize = WORLD) {
   const gl = canvas.getContext('webgl', { antialias: false, stencil: true, alpha: false });
   if (!gl) return null;
@@ -99,8 +102,10 @@ function Renderer(canvas, worldSize = WORLD) {
   // Supersampling: draw at SSx into a texture, then shrink it onto the canvas so each pixel averages SS*SS samples.
   const SS = Math.max(2, Math.min(4, +new URLSearchParams(location.search).get('ss') || 3));
   const blit = program('attribute vec2 a_p; varying vec2 v; void main() { v = a_p * 0.5 + 0.5; gl_Position = vec4(a_p, 0.0, 1.0); }',
-    `precision mediump float; varying vec2 v; uniform sampler2D u_tex; uniform vec2 u_texel;
-     void main() { vec4 c = vec4(0.0); for (int i = 0; i < ${SS}; i++) for (int j = 0; j < ${SS}; j++) c += texture2D(u_tex, v + (vec2(float(i), float(j)) + 0.5 - ${(SS / 2).toFixed(1)}) * u_texel); gl_FragColor = c / ${(SS * SS).toFixed(1)}; }`);
+    `precision mediump float; varying vec2 v; uniform sampler2D u_tex; uniform vec2 u_texel; uniform float u_bloom;
+     void main() { vec4 c = vec4(0.0); for (int i = 0; i < ${SS}; i++) for (int j = 0; j < ${SS}; j++) c += texture2D(u_tex, v + (vec2(float(i), float(j)) + 0.5 - ${(SS / 2).toFixed(1)}) * u_texel); c /= ${(SS * SS).toFixed(1)}; vec3 g = vec3(0.0);
+       if (u_bloom > 0.0) for (int i = 0; i < 12; i++) { float a = float(i) * 0.5236; vec2 d = vec2(cos(a), sin(a)) * u_texel * ${(SS * 5).toFixed(1)}; for (int r = 1; r <= 3; r++) { vec4 t = texture2D(u_tex, v + d * float(r)); g += t.rgb * t.a; } }   // glowing voxels spill light onto their neighbours
+       gl_FragColor = vec4(c.rgb + g * u_bloom / 36.0, 1.0); }`);
   const fbo = gl.createFramebuffer(), fboTex = gl.createTexture(), fboDepth = gl.createRenderbuffer(), quad = gl.createBuffer();
   gl.bindTexture(gl.TEXTURE_2D, fboTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width * SS, canvas.height * SS, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   for (const [k, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
@@ -130,15 +135,15 @@ function Renderer(canvas, worldSize = WORLD) {
       this.stats.draws = this.stats.tris = 0;
       gl.bindFramebuffer(gl.FRAMEBUFFER, ss ? fbo : null);
       gl.viewport(0, 0, canvas.width * (ss ? SS : 1), canvas.height * (ss ? SS : 1));
-      gl.clearColor(...clear, 1); gl.clearStencil(0);
+      gl.clearColor(...clear, 0); gl.clearStencil(0);                    // alpha is the glow mask: the background does not glow
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
     },
     clearDepth() { gl.depthMask(true); gl.clear(gl.DEPTH_BUFFER_BIT); },
-    end() {                                                           // resolve the supersampled frame onto the canvas
+    end(bloom) {                                                      // resolve the supersampled frame onto the canvas, optionally with a glow around emissive voxels
       if (!ss) return;
       gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height);
       gl.useProgram(blit.p); gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.STENCIL_TEST);
-      gl.uniform2f(blit.u.u_texel, 1 / (canvas.width * SS), 1 / (canvas.height * SS));
+      gl.uniform2f(blit.u.u_texel, 1 / (canvas.width * SS), 1 / (canvas.height * SS)); gl.uniform1f(blit.u.u_bloom, bloom || 0);
       gl.bindTexture(gl.TEXTURE_2D, fboTex); gl.bindBuffer(gl.ARRAY_BUFFER, quad);
       gl.enableVertexAttribArray(blit.a.a_p); gl.vertexAttribPointer(blit.a.a_p, 2, gl.FLOAT, false, 0, 0);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -177,6 +182,7 @@ function Renderer(canvas, worldSize = WORLD) {
       gl.uniform1f(u.u_flat, shadow ? 1 : 0); gl.uniform2f(u.u_shift, 3, 2);
       gl.uniform3f(u.u_fall, fall && fall.dx || 0, fall && fall.dy || 0, fall && fall.a || 0); gl.uniform1f(u.u_lift, fall && fall.lift || 0); gl.uniform1f(u.u_flash, fall && fall.flash || 0);
       gl.uniform1f(u.u_light, o.light ? 1 : 0); gl.uniform1f(u.u_shade, o.shade ? 1 : 0);
+      const la = fall && fall.litA || WHITE, lb = fall && fall.litB || la; gl.uniform3f(u.u_litA, la[0], la[1], la[2]); gl.uniform3f(u.u_litB, lb[0], lb[1], lb[2]);
       gl.uniform4f(u.u_tint, 0, 0, 0, shadow ? 0.28 : 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(m, shadow ? 'top' : 'data'));
       for (const [name, size, off] of [['a_pos', 3, 0], ['a_layer', 1, 12], ['a_color', 3, 16], ['a_normal', 3, 28]]) {

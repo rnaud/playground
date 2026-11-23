@@ -34,3 +34,14 @@ Every prompt ended with the same style line: "Chunky voxel-art style built from 
 | `decals-metro`, `decals-chateau`, `decals-workshop` | 16:9 | Three wall-mounted objects per sheet on the same magenta background: poster, station plate, sconce; painting, wine-rack arch, window; pipes and gauges, Tesla tube, workshop window. The pipeline pastes each onto its plain wall to make the wall variants. |
 
 The order of the objects in each sheet matters: `build_art.py` splits a sheet into objects left to right and names them from its own tables.
+
+### Added for lighting, the Metro hall and combat
+
+| Files | Aspect | What it is |
+| --- | --- | --- |
+| `props-metro` | 16:9 | Five objects on magenta: hanging Art Deco ceiling lamp, station bench, brass bin, signal post, iron lantern on a chain. |
+| `tunnel` | 1:1 | "Flat orthographic front elevation of the end wall of a 1930s Paris Metro station": an arched tunnel mouth in white tile, reaching down to the track bed. Two cells wide. |
+| `enemies-back` | 16:9 | The four machines "each seen from directly behind". The pipeline squeezes each onto the outline of its front view. |
+| `enemies-aim`, `enemies-fire` | 16:9 | The four machines "each AIMING ITS WEAPON STRAIGHT AT THE VIEWER", and the same "FIRING ... with a bright yellow-white star-shaped muzzle flash at every gun muzzle". |
+
+Glowing pixels (lamp glass, furnace grilles, portholes, muzzle flashes) are picked out by colour in `build_art.py` and stored with alpha 200; the game leaves them out of the baked lighting and blooms them.
