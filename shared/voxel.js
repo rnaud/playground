@@ -9,7 +9,7 @@ const FACES = [ // normal, then the 4 corners of the face on the unit cube
   [[0, 0, 1], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]],
 ];
 function buildMesh(d) {
-  const { W, L, H, fn } = d, grid = new Array(W * L * H), at = (x, y, z) => x < 0 || y < 0 || z < 0 || x >= W || y >= L || z >= H ? null : grid[(z * L + y) * W + x];
+  const { W, L, H, fn } = d, grid = new Array(W * L * H), at = (x, y, z) => x < 0 || y < 0 || z < 0 || x >= W || y >= L || z >= H ? (d.outside ? d.outside(x, y, z) : null) : grid[(z * L + y) * W + x];   // d.outside lets a model say what lies beyond its own grid, so faces against it are skipped
   let voxels = 0;
   for (let z = 0; z < H; z++) for (let y = 0; y < L; y++) for (let x = 0; x < W; x++) { const c = fn(x, y, z); grid[(z * L + y) * W + x] = c; if (c != null) voxels++; }
   const v = [], top = [];
@@ -39,7 +39,7 @@ const FOG = `uniform vec4 u_fog; vec3 fog(vec3 c, float dist) { return mix(c, u_
 const VS = `
 attribute vec3 a_pos; attribute float a_layer; attribute vec3 a_color; attribute vec3 a_normal;
 uniform vec2 u_obj; uniform float u_rot; uniform vec3 u_cam; uniform vec2 u_pitch; uniform vec4 u_view;
-uniform float u_scale, u_explode, u_zscale, u_H, u_flat, u_light, u_shade; uniform vec2 u_shift; uniform vec3 u_fall; uniform float u_lift; // fall: direction x,y + angle; lift: height above the ground
+uniform float u_scale, u_explode, u_zscale, u_H, u_flat, u_light, u_shade; uniform vec2 u_shift; uniform vec3 u_fall; uniform float u_lift, u_flash; // fall: direction x,y + angle; lift: height above the ground
 varying vec3 v_color; varying float v_dist;` + PROJ + `
 vec2 rot(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(p.x * c - p.y * s, p.x * s + p.y * c); }
 void main() {
@@ -59,14 +59,14 @@ void main() {
   float side = 0.55 + 0.35 * max(0.0, dot(n, normalize(vec2(-0.5, 0.85))));
   float k = mix(1.0, a_normal.z > 0.5 ? 1.0 : side, u_light);
   k *= mix(1.0, 0.62 + 0.38 * a_layer / max(1.0, u_H - 1.0), u_shade);
-  v_color = a_color * k;
+  v_color = mix(a_color * k, vec3(1.0), u_flash);
 }`;
 const FS = `precision mediump float; varying vec3 v_color; varying float v_dist; uniform vec4 u_tint;` + FOG + `
 void main() { bool sh = u_tint.a > 0.0; gl_FragColor = vec4(fog(sh ? u_tint.rgb : v_color, v_dist), sh ? u_tint.a : 1.0); }`;
 const GVS = `
-attribute vec2 a_p; uniform vec3 u_cam; uniform vec2 u_pitch; uniform vec4 u_view; uniform float u_world; varying vec2 v_uv; varying float v_dist;` + PROJ + `
+attribute vec2 a_p; uniform vec3 u_cam; uniform vec2 u_pitch; uniform vec4 u_view; uniform float u_world, u_height; varying vec2 v_uv; varying float v_dist;` + PROJ + `
 void main() {
-  if (u_proj.w > 0.5) { gl_Position = persp(a_p, 0.0, u_view); v_dist = gl_Position.w; }
+  if (u_proj.w > 0.5) { gl_Position = persp(a_p, u_height, u_view); v_dist = gl_Position.w; }
   else {
     vec2 d = a_p - u_cam.xy; float c = cos(-u_cam.z), s = sin(-u_cam.z);
     vec2 r = vec2(d.x * c - d.y * s, d.x * s + d.y * c);
@@ -76,7 +76,7 @@ void main() {
   v_uv = a_p / u_world;
 }`;
 const GFS = `precision mediump float; varying vec2 v_uv; varying float v_dist; uniform sampler2D u_tex;` + FOG + `
-void main() { gl_FragColor = vec4(fog(texture2D(u_tex, v_uv).rgb, v_dist), 1.0); }`;
+void main() { vec4 t = texture2D(u_tex, v_uv); if (t.a < 0.5) discard; gl_FragColor = vec4(fog(t.rgb, v_dist), 1.0); }`;
 
 function Renderer(canvas, worldSize = WORLD) {
   const gl = canvas.getContext('webgl', { antialias: false, stencil: true, alpha: false });
@@ -94,7 +94,7 @@ function Renderer(canvas, worldSize = WORLD) {
     for (let i = 0; i < gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES); i++) { const n = gl.getActiveAttrib(p, i).name; a[n] = gl.getAttribLocation(p, n); }
     return { p, u, a };
   };
-  const vox = program(VS, FS), gnd = program(GVS, GFS), buffers = new Map();
+  const vox = program(VS, FS), gnd = program(GVS, GFS), buffers = new Map(), texFor = new Map();
   let groundBuf = null, groundTex = null, view = null, pitch = null, eye = null, ss = false;
   // Supersampling: draw at SSx into a texture, then shrink it onto the canvas so each pixel averages SS*SS samples.
   const SS = Math.max(2, Math.min(4, +new URLSearchParams(location.search).get('ss') || 3));
@@ -133,6 +133,7 @@ function Renderer(canvas, worldSize = WORLD) {
       gl.clearColor(...clear, 1); gl.clearStencil(0);
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
     },
+    clearDepth() { gl.depthMask(true); gl.clear(gl.DEPTH_BUFFER_BIT); },
     end() {                                                           // resolve the supersampled frame onto the canvas
       if (!ss) return;
       gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height);
@@ -142,18 +143,21 @@ function Renderer(canvas, worldSize = WORLD) {
       gl.enableVertexAttribArray(blit.a.a_p); gl.vertexAttribPointer(blit.a.a_p, 2, gl.FLOAT, false, 0, 0);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     },
-    ground(image, cam) {
+    // a textured horizontal plane: the ground at height 0, or (first person only) a ceiling higher up
+    ground(image, cam, height = 0) {
+      let groundTex = texFor.get(image);
       if (!groundTex) {
         // copy onto a power-of-two canvas so WebGL1 can build mipmaps: distant ground then averages instead of sparkling
         const pot = mkCanvas(2048, 2048), pg = pot.getContext('2d'); pg.imageSmoothingEnabled = false; pg.drawImage(image, 0, 0, 2048, 2048);
         groundTex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, groundTex);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, pot); gl.generateMipmap(gl.TEXTURE_2D);
         for (const [k, v] of [[gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, k, v);
+        texFor.set(image, groundTex);
         groundBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, groundBuf);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, worldSize, 0, worldSize, worldSize, 0, 0, worldSize, worldSize, 0, worldSize]), gl.STATIC_DRAW);
       }
       gl.useProgram(gnd.p); gl.disable(gl.DEPTH_TEST); gl.disable(gl.BLEND); gl.disable(gl.STENCIL_TEST);
-      camera(gnd.u); gl.uniform3f(gnd.u.u_cam, cam.x, cam.y, cam.a); gl.uniform1f(gnd.u.u_world, worldSize);
+      camera(gnd.u); gl.uniform3f(gnd.u.u_cam, cam.x, cam.y, cam.a); gl.uniform1f(gnd.u.u_world, worldSize); gl.uniform1f(gnd.u.u_height, height);
       gl.bindTexture(gl.TEXTURE_2D, groundTex); gl.bindBuffer(gl.ARRAY_BUFFER, groundBuf);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, eye ? gl.LINEAR_MIPMAP_LINEAR : gl.NEAREST);
       gl.enableVertexAttribArray(gnd.a.a_p); gl.vertexAttribPointer(gnd.a.a_p, 2, gl.FLOAT, false, 0, 0);
@@ -171,7 +175,7 @@ function Renderer(canvas, worldSize = WORLD) {
       gl.uniform2f(u.u_obj, x, y); gl.uniform1f(u.u_rot, rot); gl.uniform3f(u.u_cam, cam.x, cam.y, cam.a);
       gl.uniform1f(u.u_scale, o.scale); gl.uniform1f(u.u_explode, o.explode); gl.uniform1f(u.u_zscale, o.zscale); gl.uniform1f(u.u_H, m.H);
       gl.uniform1f(u.u_flat, shadow ? 1 : 0); gl.uniform2f(u.u_shift, 3, 2);
-      gl.uniform3f(u.u_fall, fall && fall.dx || 0, fall && fall.dy || 0, fall && fall.a || 0); gl.uniform1f(u.u_lift, fall && fall.lift || 0);
+      gl.uniform3f(u.u_fall, fall && fall.dx || 0, fall && fall.dy || 0, fall && fall.a || 0); gl.uniform1f(u.u_lift, fall && fall.lift || 0); gl.uniform1f(u.u_flash, fall && fall.flash || 0);
       gl.uniform1f(u.u_light, o.light ? 1 : 0); gl.uniform1f(u.u_shade, o.shade ? 1 : 0);
       gl.uniform4f(u.u_tint, 0, 0, 0, shadow ? 0.28 : 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, bufferFor(m, shadow ? 'top' : 'data'));
