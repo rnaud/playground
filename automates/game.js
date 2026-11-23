@@ -56,12 +56,24 @@ door(20, 3);
 place('T', 'I', [[18, 1], [22, 2]]); place('Y', 'I', [[19, 0], [21, 0]]); place('G', 'I', [[20, 0]]);
 }
 const FLOORS = 'mrcbwkgoiDz.', isFloor = t => FLOORS.includes(t);
-const WALL_BASE = { P: 'M', N: 'M', L: 'M', V: 'B', F: 'W', X: 'S', G: 'I', T: 'I', Y: 'I' };              // each decorated wall and the plain wall it is a variant of
+const WALL_BASE = { P: 'M', N: 'M', L: 'M', V: 'B', F: 'W', X: 'S', G: 'I', T: 'I', Y: 'I',
+  0: 'M', 1: 'M', 2: 'M', 3: 'M', 4: 'M', 5: 'M', 6: 'M', 7: 'M', 8: 'C', 9: 'C', A: 'C', E: 'C', J: 'B', O: 'B', Q: 'B', R: 'B',   // posters, a map, a clock, a hose reel, a ticket window, a sign, a telephone; a plaque, a candle niche, a gate, bones; a tun, a slate, hooks, bottles
+  Z: 'W', a: 'W', d: 'W', e: 'W', f: 'S', h: 'S', j: 'S', n: 'S', p: 'I', q: 'I', s: 'I', t: 'I' };                              // books, a mirror, a fireplace, the Baron; a fountain, ivy, a door, a bust; gears, a blueprint, a switchboard, tools
+// Dressing the walls: the hand-placed pieces above stay where they are, and most of the plain wall that faces a floor is then
+// given something from its room's stock, chosen by position so that a level is the same every time and neighbours differ.
+const STOCK2 = { M: '025673', C: '8E', B: 'OQR', W: 'aeF', S: 'hn', I: 'pqst' }, wallHash = (x, y) => (Math.imul(x + 11, 73856093) ^ Math.imul(y + 7, 19349663)) >>> 0;   // the smaller pieces, for the second half of a stretch of wall
+{ const STOCK = { M: '000111223345556667777PPN', C: '88899AEEE', B: 'JJOOQQQRRRV', W: 'ZZZaadeFF', S: 'fhhhhjnn', I: 'pppqqssttG' }, last = {}, HOME = { M: 'mr', C: 'c', B: 'b', W: 'wk', S: 'go', I: 'i' };
+  for (let y = 0; y < DH; y++) for (let x = 0; x < DW; x++) { const t = tiles[y][x], pool = STOCK[t]; if (!pool) continue;
+    const faces = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => (tiles[y + b] || [])[x + a]).filter(f => f && isFloor(f) && f !== 'D');
+    if (!faces.length || faces.some(f => !HOME[t].includes(f))) continue;      // only walls that face their own room: a wine tun does not belong on the workshop's side of the cellar wall
+    const h = wallHash(x, y); if (h % 100 < 12) continue;
+    let k = pool[(h >>> 8) % pool.length]; if (k === last[t] || (tiles[y - 1] && tiles[y - 1][x] === k)) k = pool[((h >>> 8) + 5) % pool.length]; tiles[y][x] = last[t] = k; } }              // each decorated wall and the plain wall it is a variant of
 // The plan is now scaled up: corridors come out two cells wide and rooms twice as long and broad, with the art at the same
 // size as before. A decorated wall keeps its decoration on every other cell, and a door becomes a pair of leaves.
 { const plan = tiles.map(row => row.slice()), at = (x, y) => (plan[y] || [])[x] || ' ';
   tiles.length = 0;
-  for (let y = 0; y < GH; y++) tiles.push(Array.from({ length: GW }, (_, x) => { const t = plan[y >> 1][x >> 1]; return WALL_BASE[t] && ((x + y) & 1) ? WALL_BASE[t] : t; }));
+  for (let y = 0; y < GH; y++) tiles.push(Array.from({ length: GW }, (_, x) => { const t = plan[y >> 1][x >> 1]; if (!WALL_BASE[t] || !((x + y) & 1)) return t; const b = WALL_BASE[t], h = wallHash(x * 3 + 1, y * 5 + 2), s = STOCK2[b], k = s[(h >>> 8) % s.length];   // the other half of each decorated stretch: plain, or one of the smaller pieces
+    return LEVEL === 1 && h % 100 < 55 && k !== t ? k : b; }));
   for (const d of doors) {
     d.vertical = !isFloor(at(d.cx - 1, d.cy)); d.floor = d.vertical ? at(d.cx, d.cy - 1) : at(d.cx - 1, d.cy);
     const X = d.cx * K, Y = d.cy * K;
@@ -448,6 +460,8 @@ for (const n of ['bullets', 'shells', 'cells']) { const s = sprite(n); box('a_' 
 lathe('a_wine', sprite('wine')); lathe('a_lamp', sprite('lamp')); lathe('a_drum', sprite('drum')); lathe('a_column', sprite('column', 0, WH * VPU));
 box('a_cask', sprite('cask'), 44); lathe('a_table', sprite('table')); box('a_exit', sprite('exit'), 28);
 lathe('a_chandelier', sprite('chandelier')); box('a_arch', sprite('arch', WV + 6, LOWC * VPU), 12); box('a_rack', sprite('rack'), 40); box('a_workbench', sprite('workbench'), 16); box('a_train', sprite('train'), 36);
+for (const [n, depth] of [['kiosk', 26], ['suitcases', 26], ['trolley', 30], ['barrow', 24], ['bottles', 30], ['armchair', 38], ['armour', 14], ['clock', 20], ['anvil', 16], ['repair', 16]]) box('a_' + n, sprite(n), depth);   // the second set of furniture: flat-sided things are extruded,
+for (const n of ['scale', 'morris', 'bones', 'candles', 'sacks', 'globe', 'palm', 'coil', 'urn', 'statue']) lathe('a_' + n, sprite(n));                                                                                    // round ones are turned
 lathe('a_hang', sprite('hanglamp')); lathe('a_lantern', sprite('lantern')); lathe('a_bin', sprite('bin')); lathe('a_signal', sprite('signal')); box('a_bench', sprite('bench'), 14);
 { const s = sprite('crate'); box('a_crate', s, s.w); }
 // shots, sparks and debris stay simple shapes, at half scale so they sit with the finer models
@@ -482,13 +496,15 @@ if (LEVEL === 1) {
 for (let cx = 2; cx <= 14; cx += 2) FIX.push({ model: 'a_hang', x: cx * DS, y: 28 * DS, hang: (SPRING + RISE) * VOX, z: (SPRING + RISE) * VOX - 6, R: 110, I: .5, col: WARM });
 for (const [cx, cy] of [[7, 4], [8, 7], [2, 8], [8, 14], [5, 12], [11, 9], [4, 2], [10, 4], [13, 8]]) FIX.push({ model: 'a_lantern', ...C(cx, cy), hang: LOWC, z: LOWC - 5, R: 76, I: .85, col: AMBER, flick: 1 });
 for (const [cx, cy] of [[18, 18], [22, 18], [20, 15], [20, 21], [14, 18], [2, 18], [14, 22], [17, 27]]) { const hang = inCellar(cx * K, cy * K) ? 22 : WH - 6; FIX.push({ model: 'a_lantern', ...C(cx, cy), hang, z: hang - 5, R: 84, I: .9, col: AMBER, flick: 1 }); }
+for (const [cx, cy, ox, oy] of [[2, 12, -8, 8], [11, 12, 8, 8], [5, 4, -7, 7], [8, 7, 7, -7], [8, 13, -8, 0], [2, 5, 8, -5], [16, 20, -8, 0], [6, 9, 8, 8]]) FIX.push({ model: 'a_candles', ...C(cx, cy, ox, oy), z: 8, R: 44, I: .55, col: AMBER, flick: 1 });   // candles on blocks of stone
+for (const [cx, cy, ox, oy] of [[26, 18, -7, 0], [33, 18, 7, 0], [26, 22, -7, 0], [33, 22, 7, 0]]) FIX.push({ model: 'a_coil', ...C(cx, cy, ox, oy), z: 20, R: 60, I: .6, col: COLD });   // the Baron's coils
 for (const [cx, cy] of [[20, 9], [18, 3], [22, 3]]) FIX.push({ model: 'a_chandelier', ...C(cx, cy), hang: WH, z: WH - 8, R: 120, I: .55, col: WARM });
 for (const [cx, cy, ox] of [[26, 9, -4], [33, 9, 4], [28, 5, 0], [32, 13, 0]]) FIX.push({ model: 'a_lamp', ...C(cx, cy, ox, -5), z: 16, R: 88, I: .85, col: WARM });
 } else for (const [cx, cy] of [[4, 24], [8, 27], [15, 24], [19, 21], [24, 20], [30, 25], [27, 19], [16, 6], [22, 12], [26, 5], [20, 6], [24, 15], [11, 25]]) { const p = C(cx, cy, 4, 4); FIX.push({ model: 'a_lamp', ...p, z: heightAt(p.x, p.y) + 16, R: 95, I: .9, col: WARM }); }   // street lamps along the roofs
 const lights = FIX.map(f => ({ x: f.x, y: f.y, z: f.z, R: f.R, I: f.I, col: f.col, flick: f.flick, air: 1 }));
 const FARK = 1.55 * .48;                                                      // how much of a lamp's direct light the far map carries
 for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {            // sconces, lit windows and Tesla tubes on the walls
-  const t = tile(cx, cy), k = { L: [60, .65, WARM], X: [56, .5, WARM], T: [62, .6, COLD], Y: [62, .5, COLD] }[t];
+  const t = tile(cx, cy), k = { L: [60, .65, WARM], X: [56, .5, WARM], T: [62, .6, COLD], Y: [62, .5, COLD], 9: [40, .5, AMBER], d: [64, .7, AMBER] }[t];
   if (k) for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isFloor(tile(cx + sx, cy + sy))) lights.push({ x: cx * CS + 8 + sx * 11, y: cy * CS + 8 + sy * 11, z: 13 + Math.max(0, baseAt(cx + sx, cy + sy)), R: k[0], I: k[1], col: k[2], air: .5 });
 }
 for (let j = 1; j < GH; j += 2) for (let i = 1; i < GW; i += 2) {            // the lamps painted on the flat ceilings sit where four cells meet
@@ -602,7 +618,7 @@ const ALT = [                                                                  /
   { cost: 6, pellets: 6, dmg: 10, spread: .018, rate: .5, kick: 1.5 },          // submachine gun: a tight burst of six
   { cost: 8, pellets: 1, dmg: 60, spread: 0, rate: .6, kick: 1.2, chain: 3 },   // Tesla: an arc that jumps on to three more machines
 ];
-const BREAK = { a_cask: 30, a_crate: 18, a_rack: 45 };                         // furniture that can be shot to pieces, and what it takes
+const BREAK = { a_cask: 30, a_crate: 18, a_rack: 45, a_bottles: 12, a_suitcases: 16, a_sacks: 22, a_kiosk: 30, a_bones: 8, a_palm: 14, a_urn: 22, a_globe: 14, a_armchair: 28 };                         // furniture that can be shot to pieces, and what it takes
 let enemies, items, decor, shots, fx, debris, brass, P, state, flow, flowT, logLines, stats, freeze = 0, enc = [], darkT = 0, lampT = 0, MAXLAMP = 18;   // enc: the encounters; darkT: how long the lanterns stay out   // brass: spent cases on the floor; freeze: the instant the game holds still on a kill
 const say = t => { logLines.push({ t, life: 3.2 }); if (logLines.length > 3) logLines.shift(); };
 function reset() {
@@ -628,9 +644,25 @@ function reset() {
   for (const cx of [3, 5, 11, 13]) for (const ox of [-5, 5]) D('a_bench', cx, 26, ox, -5, { r: 5 }); D('a_bin', 7, 26, 4, -5, { r: 2 }); D('a_bin', 9, 26, -4, -5, { r: 2 }); D('a_signal', 1, 27, -4, 6, { r: 1.5 }); D('a_signal', 14, 27, 4, 6, { r: 1.5 });
   E('automate', 6, 18); E('automate', 10, 19); I('baguette', 11, 17); D('a_bench', 8, 20, 12, 5, { r: 5 });
   I('shotgun', 2, 17); I('shells', 1, 20); I('shells', 3, 20); E('automate', 2, 19); D('a_crate', 1, 16); D('a_crate', 3, 16, 0, 0, { rot: .4 });
+  // what people left behind: the station's furniture, the quarrymen's and the cellarman's clutter, the Baron's house and his workshop
+  const Q = Math.PI / 2;
+  D('a_kiosk', 2, 26, 0, -8, { r: 6 }); D('a_scale', 6, 26, 8, -9, { r: 2.5 }); D('a_suitcases', 10, 26, 0, -9, { r: 4 }); D('a_morris', 7, 27, -10, -2, { r: 4.5 }); D('a_trolley', 13, 26, -8, -8, { r: 5 }); D('a_suitcases', 1, 26, -6, 6, { r: 4, rot: .5 });
+  D('a_trolley', 6, 20, 0, 8, { r: 5 }); D('a_suitcases', 10, 17, 4, -8, { r: 4 }); D('a_scale', 11, 19, 9, 0, { r: 2.5, rot: Q }); D('a_sacks', 5, 17, -7, -7, { r: 4 }); D('a_kiosk', 8, 17, 12, -8, { r: 6 });
+  D('a_anvil', 1, 18, -6, 0, { r: 3, rot: Q }); D('a_sacks', 3, 19, 7, 4, { r: 4 }); D('a_barrow', 2, 20, 0, 7, { r: 4 });
+  for (const [x, y, ox, oy] of [[2, 6, -8, 0], [2, 10, 8, 0], [4, 12, 0, 8], [9, 12, 0, -8], [11, 7, 8, 0], [11, 11, -8, 0], [8, 15, 8, 0], [3, 3, -6, 6], [6, 2, 6, -6], [6, 9, -6, 6], [7, 8, 6, -6], [10, 5, 6, 6], [5, 1, 0, -8], [2, 2, -8, -8]]) D('a_bones', x, y, ox, oy, { r: 3, rot: x * 1.7 + y, solid: false });
+  D('a_barrow', 5, 10, -4, 8, { r: 4 }); D('a_barrow', 4, 3, 6, 8, { r: 4, rot: .6 }); D('a_sacks', 7, 10, 8, 8, { r: 4 });
+  D('a_bottles', 17, 17, -6, 0, { r: 4 }); D('a_bottles', 23, 19, 6, 0, { r: 4, rot: Q }); D('a_bottles', 21, 15, 0, -6, { r: 4 }); D('a_sacks', 16, 18, -8, 9, { r: 4 }); D('a_sacks', 24, 16, 7, -6, { r: 4 }); D('a_barrow', 22, 22, 0, 7, { r: 4 }); D('a_sacks', 14, 18, 0, -9, { r: 4 }); D('a_bottles', 19, 20, 8, 8, { r: 4, rot: .4 });
+  for (const [x, y, ox] of [[16, 7, -7], [24, 7, 7], [16, 11, -7], [24, 11, 7]]) D('a_armour', x, y, ox, 0, { r: 3.5, rot: Q });
+  for (const [x, y, ox, oy] of [[16, 6, -8, -8], [24, 6, 8, -8], [16, 12, -8, 8], [24, 12, 8, 8], [19, 4, 8, 8], [21, 1, -8, -8]]) D('a_palm', x, y, ox, oy, { r: 2.5 });
+  D('a_armchair', 17, 10, -4, 4, { r: 5, rot: .5 }); D('a_armchair', 23, 10, 4, 4, { r: 5, rot: -.5 }); D('a_globe', 16, 9, -8, 0, { r: 3 }); D('a_clock', 24, 9, 10, 0, { r: 3, rot: Q });
+  D('a_armchair', 16, 3, -6, 0, { r: 5, rot: Q }); D('a_armchair', 19, 1, 6, -6, { r: 5 }); D('a_globe', 17, 4, 0, 7, { r: 3 }); D('a_clock', 16, 1, -9, -9, { r: 3, rot: Q });
+  D('a_armchair', 22, 2, -6, -2, { r: 5, rot: .3 }); D('a_armchair', 23, 3, 6, 5, { r: 5, rot: -2.4 }); D('a_armour', 24, 2, 8, 0, { r: 3.5, rot: Q }); D('a_clock', 21, 4, -9, 9, { r: 3 }); D('a_globe', 24, 4, 8, 8, { r: 3 });
+  for (const [x, y, ox, oy] of [[27, 10, 0, -8], [29, 8, 0, 8], [32, 10, 0, -8], [31, 13, -9, 0], [29, 13, 9, 0], [27, 8, 0, 8]]) D('a_urn', x, y, ox, oy, { r: 3 });
+  for (const [x, y, ox, oy] of [[26, 6, -6, 0], [33, 8, 6, 0], [29, 12, -4, 0], [33, 13, 6, 6], [30, 5, 0, -6]]) D('a_statue', x, y, ox, oy, { r: 3.5 });
+  D('a_repair', 28, 16, 0, -8, { r: 4 }); D('a_repair', 32, 16, 0, -8, { r: 4 }); D('a_repair', 29, 24, 8, 8, { r: 4 }); D('a_anvil', 27, 20, -6, 0, { r: 3, rot: Q }); D('a_anvil', 32, 21, 6, 0, { r: 3 }); D('a_sacks', 26, 16, -8, -8, { r: 4 }); D('a_barrow', 33, 24, 6, 6, { r: 4 });
   // catacombs
   E('automate', 8, 13); E('lanterne', 5, 12); E('automate', 2, 9); E('lanterne', 2, 6); E('automate', 4, 2); E('automate', 6, 3); E('lanterne', 6, 8); E('automate', 11, 8);
-  I('helmet', 18, 26); I('grenades', 17, 27); I('shells', 18, 27); I('wine', 13, 7); I('shells', 13, 9); I('bullets', 13, 8); I('cells', 14, 21, -8, -8); I('wine', 14, 22, -8, 8); I('grenades', 14, 22, 8, 8); I('helmet', 14, 21, -8, 8);   // what the hidden rooms hold
+  I('helmet', 18, 26); I('grenades', 17, 27); I('shells', 18, 27); I('wine', 13, 7); I('shells', 13, 9); I('bullets', 13, 8); I('cells', 14, 21, -4, -3); I('wine', 14, 22, -4, 3); I('grenades', 14, 22, 4, 3); I('helmet', 14, 21, 4, -3);   // what the hidden rooms hold
   I('key_blue', 3, 1); I('baguette', 7, 1); I('shells', 5, 9); I('bullets', 8, 10); I('helmet', 10, 4); I('wine', 11, 5);
   // wine cellar
   E('scaphandre', 20, 18); E('automate', 17, 15); E('automate', 23, 21); E('automate', 23, 15); E('lanterne', 20, 21);
@@ -877,7 +909,7 @@ function fire(alt) {
     else if (end >= wall) {                                         // the wall is chipped away where the shot lands, and throws out its own rubble
       const ix = P.x + dx * (end - 1.2), iy = P.y + dy * (end - 1.2), iz = Math.min(WH + 12, zAt(end) - 1 + rand(-.6, .6)), hit = panelAt(P.x + dx * end, P.y + dy * end, dx, dy);
       sparks(ix, iy, iz, 4, a + Math.PI, 2); smoke(ix, iy, iz, 1);
-      if (hit && /^panel_[FX]_/.test(hit[0].m.name) && !hit[0].smashed) { hit[0].smashed = true; sfx('glass', { x: ix, y: iy }); chips(ix, iy, iz, 22, [.75, .9, 1, .5], a + Math.PI); chip(hit[0], 64, 130, 16); }   // a window goes
+      if (hit && /^panel_[FXa]_/.test(hit[0].m.name) && !hit[0].smashed) { hit[0].smashed = true; sfx('glass', { x: ix, y: iy }); chips(ix, iy, iz, 22, [.75, .9, 1, .5], a + Math.PI); chip(hit[0], 64, 130, 16); }   // a window goes
       if (hit && /^panel_G/.test(hit[0].m.name)) { const s = steamers.find(q => Math.hypot(q.x - ix, q.y - iy) < 18 && !(q.cd > stats.time)); if (s) { s.cd = stats.time + 2.5; vent(s, true); } }   // a shot into the pipework lets the steam out
       const k = hit && chip(hit[0], hit[1], (iz - hit[0].lift) * WPU, P.weapon === 3 ? 5 : P.weapon === 1 ? 3 : 3.6);
       if (k) for (let i = 0; i < 5; i++) { const b = a + Math.PI + rand(-1, 1), v = rand(15, 60); spawn('chip', ix, iy, iz, { k: [rand(.3, .7), (k >> 16 & 255) / 255, (k >> 8 & 255) / 255, (k & 255) / 255, 0], vx: Math.cos(b) * v, vy: Math.sin(b) * v, vz: rand(-5, 40), g: 220, bounce: true, life: rand(.8, 1.6) }); }

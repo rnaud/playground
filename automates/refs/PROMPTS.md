@@ -73,3 +73,21 @@ Glowing pixels (lamp glass, furnace grilles, portholes, muzzle flashes) are pick
 | --- | --- | --- |
 | `turn-sauteur` | 16:9 | The same turnaround prompt as the other machines (magenta background, front, left profile and back in one row, neutral A-pose), for "Le Sauteur, a lean 1930s French art-deco clockwork fencer automaton: thin polished brass and dark green enamel body, narrow waist, long straight legs with coiled steel springs wrapped around the shins, long thin arms that end in short steel blades instead of hands, a small narrow head with a fencing-mask grille and a single glowing orange eye, a small red kepi cap". |
 | `turn-garde` | 16:9 | The same again for "Le Garde, a broad heavy 1930s French art-deco clockwork riot gendarme automaton: thick navy blue enamel armour plates with brass rivets and brass trim, wide shoulders with round pauldrons, a barrel chest with a brass radiator grille, a helmet shaped like a French Adrian helmet with a narrow visor slit glowing cyan, sturdy legs with brass knee caps, heavy gauntlets", with empty hands: its shield is built in code. |
+
+## Second set: wall fixtures and furniture (2026-11-23)
+
+Eleven more 16:9 sheets, same model and settings, each prompt opening with "Flat solid pure magenta (#ff00ff) background filling the whole image, no shadows, no ground, no gradient. On it, *four separate wall-mounted* / *five separate free-standing* objects in a single row with clear wide gaps between them:" and closing with the front-orthographic and style lines above plus "no letters".
+
+| File | Objects, left to right |
+| --- | --- |
+| `decals-metro2` | coffee poster in a brass frame, enamel network map, round brass wall clock, red fire-hose reel cabinet |
+| `decals-metro3` | ticket window with a brass grille, navy enamel arrow sign, Eiffel Tower travel poster, brass and walnut telephone (its shelf comes out as a separate piece and is dropped) |
+| `decals-catacombs` | memorial plaque with a cross and laurel, candle niche with a skull, iron-barred gate in an arch, shelf of bones and skulls |
+| `decals-cellar` | oak barrel end with a brass tap in a stone arch, chalkboard of tally marks, hooks with rope, lantern and mallet, shelf of bottles and a demijohn |
+| `decals-chateau2` | walnut bookcase, gilt mirror with a sunburst crest, marble fireplace with a mantel clock, portrait of a moustached baron with a monocle |
+| `decals-courtyard` | lion-head wall fountain, ivy on a trellis, arched oak door, bust in a stone niche |
+| `decals-workshop2` | train of brass gears on an iron plate, blueprint of an automaton, switchboard with knife switches and bulbs, tool rack |
+| `props-metro2` | newspaper stand, stack of suitcases with a hat box, penny weighing scale, luggage trolley with a trunk, green advertising column |
+| `props-under` | heap of skulls and bones, stone block with lit candles, wheelbarrow of rubble, crate of wine bottles, pile of sacks |
+| `props-chateau` | crimson wingback armchair, globe on a stand, suit of armour with a halberd, grandfather clock, potted palm in a brass urn |
+| `props-workshop` | Tesla coil with a cyan sphere, anvil on a stump, half-built automaton on a repair stand, stone urn of geraniums, marble statue on a pedestal |

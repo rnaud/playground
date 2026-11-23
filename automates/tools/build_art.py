@@ -122,8 +122,16 @@ DECALS = [
     ('decals-metro', [('P', 'M', 26, 24), ('N', 'M', 52, 46), ('L', 'M', 22, 44)]),
     ('decals-chateau', [('F', 'W', 50, 36), ('V', 'B', 46, 4), ('X', 'S', 56, 14)]),
     ('decals-workshop', [('G', 'I', 40, 8), ('T', 'I', 22, 20), ('Y', 'I', 40, 40)]),
+    # the second set: four fixtures a sheet, so that most stretches of wall carry something
+    ('decals-metro2', [('0', 'M', 26, 30), ('1', 'M', 50, 40), ('2', 'M', 28, 54), ('3', 'M', 34, 26)]),
+    ('decals-metro3', [('4', 'M', 48, 14), ('5', 'M', 40, 58), ('6', 'M', 34, 24), ('7', 'M', 26, 30)]),
+    ('decals-catacombs', [('8', 'C', 40, 30), ('9', 'C', 36, 28), ('A', 'C', 56, 0), ('E', 'C', 46, 28)]),
+    ('decals-cellar', [('J', 'B', 54, 4), ('O', 'B', 34, 30), ('Q', 'B', 44, 34), ('R', 'B', 44, 26)]),
+    ('decals-chateau2', [('Z', 'W', 48, 0), ('a', 'W', 28, 10), ('d', 'W', 56, 0), ('e', 'W', 44, 32)]),
+    ('decals-courtyard', [('f', 'S', 40, 0), ('h', 'S', 44, 0), ('j', 'S', 60, 0), ('n', 'S', 40, 14)]),
+    ('decals-workshop2', [('p', 'I', 46, 30), ('q', 'I', 44, 30), ('s', 'I', 40, 28), ('t', 'I', 50, 30)]),
 ]
-LIT = {'L': 'warm', 'X': 'warm', 'T': 'cyan', 'Y': 'cyan'}
+LIT = {'L': 'warm', 'X': 'warm', 'T': 'cyan', 'Y': 'cyan', '9': 'warm yellow', 'd': 'warm yellow orange'}
 for sheet, objs in DECALS:
     im = load(sheet)
     if not im: continue
@@ -166,9 +174,13 @@ SHEETS = [
     ('props-pickups', [('baguette', 14), ('wine', 34), ('helmet', 20), ('bullets', 15), ('shells', 17), ('cells', 16), ('key_red', 16), ('key_blue', 16)]),
     ('props-metro', [('hanglamp', 30), ('bench', 20), ('bin', 18), ('signal', 44), ('lantern', 28)]),
     ('props-rooms', [('chandelier', 44), ('arch', 76), ('rack', 60), ('workbench', 34)]),
+    ('props-metro2', [('kiosk', 76), ('suitcases', 34), ('scale', 72), ('trolley', 40), ('morris', 112)]),
+    ('props-under', [('bones', 20), ('candles', 24), ('barrow', 26), ('bottles', 22), ('sacks', 26)]),
+    ('props-chateau', [('armchair', 46), ('globe', 52), ('armour', 84), ('clock', 92), ('palm', 72)]),
+    ('props-workshop', [('coil', 88), ('anvil', 34), ('repair', 84), ('urn', 60), ('statue', 100)]),
     ('train', [('train', 46)]),
 ]
-SHINE = {'sauteur': 'red orange', 'garde': 'cyan', 'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
+SHINE = {'coil': 'cyan', 'candles': 'warm yellow', 'sauteur': 'red orange', 'garde': 'cyan', 'automate': 'red orange', 'scaphandre': 'cyan', 'colosse': 'red', 'lanterne': 'red', 'w_tesla': 'cyan', 'cells': 'cyan',
          'lamp': 'warm', 'table': 'warm', 'chandelier': 'warm', 'train': 'warm yellow', 'hanglamp': 'warm', 'lantern': 'warm yellow', 'signal': 'red'}
 for sheet, objs in SHEETS:
     im = load(sheet)
