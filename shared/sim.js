@@ -302,6 +302,27 @@ def('opera', 34, 30, 24, (x, y, z) => {
   if (z < 14 && y >= 27 && Math.abs(ax - 13) < 1.2) return G;                                                                                       // gilded statues
   return z < 20 ? (d < 9 * Math.sqrt(1 - Math.pow((z - 12) / 8.5, 2)) ? CU : null) : z < 22 && d < 1.2 ? G : null;                                 // copper dome
 }, 'paris');
+// Pedestrians: 5 wide, 3 deep, 11 tall, facing +y. Each look has two frames (legs and arms swapped) to fake a walk cycle.
+const pedFn = (c, stride) => (x, y, z) => {
+  const leg = x === 1 || x === 3, arm = x === 0 || x === 4, sw = stride ? (x < 2 ? 0 : 2) : 1;   // which y row this limb is on
+  if (z <= 3) return leg && y === (z < 3 ? sw : 1) ? (z === 0 ? 0x2a2a33 : c.legs) : null;
+  if (z <= 7) {
+    if (arm) return y === (z < 7 ? 2 - sw : 1) ? (z === 4 ? c.skin : c.top) : null;
+    return y === 1 ? (c.stripes && z % 2 ? 0xf4f1e6 : c.top) : null;
+  }
+  if (x < 1 || x > 3) return null;
+  if (z <= 9) return y === 0 ? c.hair : c.skin;
+  return z === 10 ? (c.beret || c.hair) : null;
+};
+const PEDS = [
+  { top: 0x2f3f6e, stripes: true, legs: 0x33363f, hair: 0x3a2a1e, skin: 0xe9b48a, beret: 0xc8343c },
+  { top: 0xd8363e, legs: 0x3d4f7a, hair: 0x1b1b22, skin: 0xc68e68 },
+  { top: 0xf4f1e6, legs: 0x8a6a4a, hair: 0xd9b84a, skin: 0xf0c8a4 },
+  { top: 0x3f9a5b, legs: 0x23232b, hair: 0x6e4a22, skin: 0x8d5a3c },
+  { top: 0xffd257, legs: 0x5a6b7a, hair: 0x9aa0ad, skin: 0xe9b48a },
+  { top: 0x1b1b22, legs: 0x1b1b22, hair: 0x7a4a2a, skin: 0xf0c8a4, beret: 0x23232b },
+];
+PEDS.forEach((c, i) => { def('walker' + (i + 1), 5, 3, 11, pedFn(c, false), 'paris'); def('walker' + (i + 1) + 'b', 5, 3, 11, pedFn(c, true), 'paris'); });
 const LANDMARKS = [['sacrecoeur', 560, 92, 0], ['moulin', 420, 104, 0], ['opera', 800, 108, 0], ['obelisk', 372, 345, 0], ['pompidou', 858, 400, 0],
   ['pantheon', 822, 700, Math.PI], ['invalides', 400, 722, Math.PI], ['montparnasse', 560, 1012, Math.PI]];
 // things a car knocks over instead of stopping at
@@ -385,7 +406,7 @@ const WORLD_DEFS = {
   paris: {
     name: 'Paris', bg: '#8f8a80', base: '#c9c2b2',
     points: [[120, 440], [146, 300], [175, 150], [270, 130], [322, 210], [460, 250], [620, 222], [800, 232], [950, 290], [985, 430], [960, 640], [905, 820], [760, 930], [560, 900], [400, 830], [250, 830], [130, 830], [72, 730], [92, 600]],
-    pickable: ['car', 'taxi', 'eiffel', 'arc', 'notredame', 'sacrecoeur', 'invalides', 'pantheon', 'opera', 'pompidou', 'moulin', 'montparnasse', 'obelisk', 'pyramid', 'haus', 'plane', 'boat'],
+    pickable: ['car', 'taxi', 'eiffel', 'arc', 'notredame', 'sacrecoeur', 'invalides', 'pantheon', 'opera', 'pompidou', 'moulin', 'montparnasse', 'obelisk', 'pyramid', 'haus', 'plane', 'boat', 'walker1'],
     road: { verge: '#ddd6c6', vergeW: 70, kerbs: false, asphalt: '#474a54', bridge: ['#b5ae9f', '#aaa394'], bridgeW: 58, bridgeOver: false, zebra: true },
     water: (x, y, m = 0) => Math.abs(y - seineY(x)) < 40 + m && !onIsle(x, y, -m),
     ground(g, r) {
@@ -419,7 +440,7 @@ const WORLD_DEFS = {
       for (const x of EXTRA_BRIDGES) { g.fillStyle = '#b5ae9f'; g.fillRect(x - 10, seineY(x) - 52, 20, 104); g.fillStyle = '#8f897d'; g.fillRect(x - 10, seineY(x) - 52, 2, 104); g.fillRect(x + 8, seineY(x) - 52, 2, 104); }
     },
     traffic: ['taxi', 'van', 'police', 'taxi', 'truck'],
-    populate({ put, clear, beside, head, r, n, blocks }) {
+    populate({ put, clear, beside, head, r, n, blocks, MODELS }) {
       const near = (x, y) => TRACK.reduce((b, p, i) => { const d = Math.hypot(p.x - x, p.y - y); return d < b[0] ? [d, i] : b; }, [1e9, 0])[1];
       const ei = near(EIFFEL.x, EIFFEL.y), E = TRACK[ei], eh = head(ei);
       put('eiffel', E.x, E.y, eh, { ghost: true, rad: 0 });
@@ -452,6 +473,10 @@ const WORLD_DEFS = {
       // river boats shuttle between bridges (they are drawn above the ground, so they must not cross one)
       const xs = TRACK.filter(p => isWater(p.x, p.y, 0)).map(p => p.x).concat(EXTRA_BRIDGES).sort((a, b) => a - b), gaps = [];
       for (let i = 0, last = -1e9; i < xs.length; i++) { if (xs[i] - last > 110) gaps.push([last + 50, xs[i] - 50]); last = xs[i]; }
+      // pedestrians: most stroll the pavements along the boulevard, the rest wander the gardens and the Louvre square
+      const ped = (x, y, extra) => { const k = 1 + (r() * PEDS.length | 0); return put('walker' + k, x, y, 0, { ghost: true, rad: 0, ped: { frames: [MODELS['walker' + k], MODELS['walker' + k + 'b']], t: r() * 9, ...extra } }); };
+      for (let i = 0; i < 80; i++) { const side = r() < 0.5 ? -1 : 1; ped(0, 0, { d: r() * n * STEP, side, dir: r() < 0.5 ? -1 : 1, speed: 11 + r() * 8, lane: side * 35 }); }
+      for (const z of [...PARKS, PLAZA]) for (let i = 0; i < z[2] * z[3] / 1700; i++) ped(z[0] + 8 + r() * (z[2] - 16), z[1] + 8 + r() * (z[3] - 16), { zone: z, speed: 8 + r() * 7, wait: r() * 3 });
       gaps.filter(gp => gp[0] > 0).forEach((gp, i) => put('boat', (gp[0] + gp[1]) / 2, 0, 0, { boat: { from: gp[0], to: gp[1], dir: i & 1 ? 1 : -1, off: i & 1 ? 29 : -29 }, ghost: true, rad: 0 }));
     },
   },
@@ -525,7 +550,7 @@ function makeWorld(MODELS) {
   const put = (kind, x, y, rot, extra) => { const m = MODELS[kind], o = { m, x, y, rot, rad: Math.max(m.W, m.L) * 0.5, breakable: BREAKABLE.has(kind), ...extra }; objects.push(o); return o; };
   const beside = (i, off) => { const p = TRACK[(i + n) % n]; return { x: p.x - p.ty * off, y: p.y + p.tx * off, facing: Math.atan2(-p.tx * Math.sign(off), p.ty * Math.sign(off)) - Math.PI / 2 }; };
   const head = i => Math.atan2(TRACK[i].ty, TRACK[i].tx);
-  DEF.populate({ put, clear, beside, head, r, n, blocks });
+  DEF.populate({ put, clear, beside, head, r, n, blocks, MODELS });
   const lap = n * STEP, car = { car: true, vel: 0, heading: 0, manual: false, rad: 14 };
   DEF.traffic.forEach((k, i) => put(k, 0, 0, 0, { ...car, auto: lap * (0.12 + i * 0.19), speed: 78, lane: 9 }));
   const player = put('car', 0, 0, 0, { ...car, auto: 30, speed: 150, lane: -9 });
@@ -601,7 +626,30 @@ function updateWorld(dt, world, cam, opt) {
   const { objects, player, foot } = world;
   const up = keys.w || keys.arrowup, dn = keys.s || keys.arrowdown, lf = keys.a || keys.arrowleft, rt = keys.d || keys.arrowright;
   if (!foot) { if (keys.q) cam.a -= 1.8 * dt; if (keys.e) cam.a += 1.8 * dt; if (opt.orbit) cam.a += 0.35 * dt; }
+  const scare = !foot && Math.abs(player.vel) > 15 ? player : null;      // a moving car you are driving makes people step back
   for (const o of objects) {
+    if (o.ped) {
+      const p = o.ped, close = scare && Math.hypot(scare.x - o.x, scare.y - o.y) < 34;
+      let moving = true;
+      if (p.zone) {                                                 // wanderer: pick a spot in the garden, walk there, pause, repeat
+        if (close) { const l = Math.hypot(o.x - scare.x, o.y - scare.y) || 1; p.tx = o.x + (o.x - scare.x) / l * 30; p.ty = o.y + (o.y - scare.y) / l * 30; p.wait = 0; }
+        if (p.wait > 0) { p.wait -= dt; moving = false; }
+        else {
+          if (p.tx == null) { p.tx = p.zone[0] + 6 + Math.random() * (p.zone[2] - 12); p.ty = p.zone[1] + 6 + Math.random() * (p.zone[3] - 12); }
+          const dx = p.tx - o.x, dy = p.ty - o.y, l = Math.hypot(dx, dy), step = p.speed * (close ? 4 : 1) * dt;
+          if (l <= step) { p.tx = null; p.wait = 1 + Math.random() * 4; }
+          else { o.x += dx / l * step; o.y += dy / l * step; o.rot = Math.atan2(dy, dx) - Math.PI / 2; }
+        }
+      } else {                                                      // pavement walker: follows the road, hugging the buildings; on bridges, inside the bollards
+        p.d += p.dir * p.speed * dt;
+        const smp = TRACK[((p.d / STEP | 0) % TRACK.length + TRACK.length) % TRACK.length], want = p.side * (isWater(smp.x, smp.y, 12) ? 24 : close ? 42 : 35);
+        p.lane += (want - p.lane) * Math.min(1, (close ? 9 : 2) * dt);
+        const at = trackAt(p.d, p.lane); o.x = at.x; o.y = at.y; o.rot = at.heading + (p.dir < 0 ? Math.PI : 0) - Math.PI / 2;
+      }
+      if (moving) p.t += dt * (close ? 2 : 1);
+      o.m = p.frames[moving ? (p.t * 3.4 | 0) & 1 : 0];
+      continue;
+    }
     if (o.boat) {                                                   // ping-pong along the river
       const b = o.boat; o.x += b.dir * 22 * dt;
       if (o.x > b.to) b.dir = -1; else if (o.x < b.from) b.dir = 1;
