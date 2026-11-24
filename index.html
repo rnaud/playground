@@ -9,11 +9,11 @@
 <style>
   * { box-sizing:border-box; }
   body { margin:0; background:#14151c; color:#e8e6df; font:16px/1.6 system-ui, sans-serif; }
-  main { max-width:1140px; margin:0 auto; padding:44px 24px 32px; }
+  main { max-width:960px; margin:0 auto; padding:44px 24px 32px; }
   .intro { margin-bottom:30px; }
   h1 { margin:0; color:#ffcf5c; font-size:clamp(32px,5vw,46px); line-height:1.2; letter-spacing:-.04em; }
   .intro p { margin:10px 0 0; color:#b6b8c7; }
-  .experiences { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr)); gap:20px; margin:0; padding:0; list-style:none; }
+  .experiences { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; margin:0; padding:0; list-style:none; }
   .card { display:flex; flex-direction:column; min-width:0; overflow:hidden; border:1px solid #343640; border-radius:12px; background:#1d1f29; transition:border-color .15s ease, transform .15s ease; }
   .card:hover { border-color:var(--accent); transform:translateY(-3px); }
   .card:focus-within { border-color:var(--accent); }
@@ -31,7 +31,7 @@
   a:focus-visible { outline:3px solid #ffcf5c; outline-offset:-4px; border-radius:5px; }
   footer { margin-top:30px; font-size:12px; }
   footer a { display:inline-block; padding:8px 0; color:#a8afc4; text-underline-offset:4px; }
-  @media(max-width:600px) { main { padding:28px 18px; } .intro { margin-bottom:22px; } .experiences { gap:18px; } }
+  @media(max-width:600px) { main { padding:28px 18px; } .intro { margin-bottom:22px; } .experiences { grid-template-columns:1fr; gap:18px; } }
   @media(prefers-reduced-motion:reduce) { .card { transition:none; } .card:hover { transform:none; } }
 </style>
 </head>
@@ -66,21 +66,9 @@
         </div>
       </a>
     </li>
-    <li class="card" style="--accent:#8fd0b8">
-      <a class="experience" href="midgar/">
-        <img class="preview" src="assets/previews/midgar.jpg" alt="" width="960" height="540" decoding="async">
-        <div class="copy">
-          <p class="kind">Playable opening</p>
-          <h2>Midgar, in paper</h2>
-          <p class="setting">Sector 01</p>
-          <p class="description">Meet the flower seller, guide the train through three signals, and watch Cloud arrive.</p>
-          <span class="open">Open experience <span aria-hidden="true">→</span></span>
-        </div>
-      </a>
-    </li>
     <li class="card" style="--accent:#8fd0ff">
       <a class="experience" href="sprite-stacking/">
-        <img class="preview" src="assets/previews/sprite-stacking.jpg" alt="" width="960" height="540" loading="lazy" decoding="async">
+        <img class="preview" src="assets/previews/sprite-stacking.jpg" alt="" width="960" height="540" decoding="async">
         <div class="copy">
           <p class="kind">Rendering experiment</p>
           <h2>Sprite stacking</h2>
@@ -102,31 +90,6 @@
           <span class="open">Open experience <span aria-hidden="true">→</span></span>
         </div>
       </a>
-    </li>
-    <li class="card" style="--accent:#e9ca77">
-      <a class="experience" href="getaway/">
-        <img class="preview" src="assets/previews/getaway.jpg" alt="" width="960" height="540" loading="lazy" decoding="async">
-        <div class="copy">
-          <p class="kind">City sandbox</p>
-          <h2>Voxel Getaway</h2>
-          <p class="setting">Cars, jobs &amp; chases</p>
-          <p class="description">Explore the city, take cars, run jobs, and dodge the police.</p>
-          <span class="open">Open experience <span aria-hidden="true">→</span></span>
-        </div>
-      </a>
-    </li>
-    <li class="card" style="--accent:#a9b1ed">
-      <a class="experience" href="voxels/">
-        <img class="preview" src="assets/previews/voxels.jpg" alt="" width="960" height="540" loading="lazy" decoding="async">
-        <div class="copy">
-          <p class="kind">Rendering experiment</p>
-          <h2>Voxels</h2>
-          <p class="setting">Real cubes in WebGL</p>
-          <p class="description">Explore the same worlds as Sprite stacking, rendered with real 3D cubes.</p>
-          <span class="open">Open experience <span aria-hidden="true">→</span></span>
-        </div>
-      </a>
-      <p class="variant"><a href="voxels/?world=paris">Paris variant <span aria-hidden="true">&nbsp;↗</span></a></p>
     </li>
   </ul>
   <footer><a href="https://github.com/rnaud/playground">View source on GitHub ↗</a></footer>
