@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sand3D, built live · Playground</title>
+<style>
+  :root { color-scheme:dark; --bg:#14151c; --panel:#1d1f29; --line:#343640; --ink:#eceef4; --dim:#9da1b0; --accent:#f0c674; --ok:#8fd48a; --warn:#f0c674; --bad:#f08a7a; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; display:grid; grid-template-rows:auto 1fr; }
+  a { color:var(--accent); }
+  header { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 18px; padding:12px 16px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0; font-weight:650; }
+  header p { margin:0; color:var(--dim); }
+  #tally { margin-left:auto; font-variant-numeric:tabular-nums; color:var(--ink); }
+  #tally b { color:var(--ok); font-weight:650; }
+  main { display:grid; grid-template-columns:270px minmax(0,1fr) 340px; min-height:0; }
+  #list { overflow:auto; border-right:1px solid var(--line); margin:0; padding:6px; list-style:none; }
+  #list button { display:grid; grid-template-columns:10px 1fr auto; gap:8px; align-items:center; width:100%; padding:7px 8px; border:0; border-radius:7px; background:none; color:var(--ink); font:inherit; text-align:left; cursor:pointer; }
+  #list button:hover { background:#232531; }
+  #list button[aria-current="true"] { background:#2a2d3b; }
+  #list button:focus-visible, .ctl:focus-visible, textarea:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  #list .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #list .ms { color:var(--dim); font-size:12px; font-variant-numeric:tabular-nums; }
+  .dot { width:8px; height:8px; border-radius:50%; background:#4b4e5c; }
+  .dot.ok { background:var(--ok); } .dot.approx { background:var(--warn); } .dot.bad { background:var(--bad); }
+  #stage { position:relative; min-height:0; min-width:0; }
+  #stage canvas { display:block; width:100%; height:100%; }
+  #status { position:absolute; left:14px; bottom:12px; right:14px; color:var(--dim); font-size:12.5px; pointer-events:none; font-variant-numeric:tabular-nums; }
+  #status strong { color:var(--ink); font-weight:600; }
+  #boot { position:absolute; inset:0; display:grid; place-items:center; color:var(--dim); text-align:center; padding:24px; }
+  aside { overflow:auto; border-left:1px solid var(--line); padding:14px; display:flex; flex-direction:column; gap:16px; }
+  aside h2 { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); margin:0 0 8px; font-weight:600; }
+  #title { font-size:16px; font-weight:650; margin:0; }
+  #ref { width:100%; aspect-ratio:1; object-fit:contain; background:#fff; border-radius:8px; display:block; }
+  figure { margin:0; } figcaption { color:var(--dim); font-size:12px; margin-top:6px; }
+  .joint { display:grid; grid-template-columns:1fr auto; gap:2px 8px; margin-bottom:8px; }
+  .joint label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .joint output { color:var(--dim); font-variant-numeric:tabular-nums; }
+  .joint input { grid-column:1 / -1; width:100%; accent-color:var(--accent); }
+  .ctl { border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:7px; padding:6px 10px; font:inherit; cursor:pointer; }
+  .ctl:hover { border-color:var(--accent); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  #notes { margin:0; padding-left:18px; color:var(--warn); } #notes:empty { display:none; }
+  #error { color:var(--bad); white-space:pre-wrap; font:12px/1.4 ui-monospace, Menlo, monospace; margin:0; } #error:empty { display:none; }
+  textarea { width:100%; min-height:260px; resize:vertical; background:#101117; color:#d7dae4; border:1px solid var(--line); border-radius:8px; padding:10px; font:12px/1.45 ui-monospace, Menlo, monospace; tab-size:4; white-space:pre; }
+  .credit { color:var(--dim); font-size:12px; margin:0; }
+  @media (max-width:980px) { body { display:block; height:auto; } main { grid-template-columns:1fr; } #list { max-height:180px; border-right:0; border-bottom:1px solid var(--line); } #stage { height:60vh; } aside { border-left:0; border-top:1px solid var(--line); } }
+</style>
+<script type="importmap">{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/",
+  "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js",
+  "three-bvh-csg": "https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.17/build/index.module.js"
+} }</script>
+</head>
+<body>
+<header>
+  <h1>Sand3D, built live</h1>
+  <p>100 programs from the <a href="https://huggingface.co/datasets/Sandflow/sand3d-articraft">Sand3D articraft dataset</a>, run as Python in your browser and meshed by three.js. No Blender, no stored meshes.</p>
+  <span id="tally" role="status">Starting Python…</span>
+</header>
+<main>
+  <ul id="list" aria-label="Programs"></ul>
+  <section id="stage" aria-label="Live build">
+    <div id="boot">Loading Python in the browser…</div>
+    <div id="status"></div>
+  </section>
+  <aside>
+    <div>
+      <p id="title">&nbsp;</p>
+      <p class="credit" id="credit"></p>
+    </div>
+    <figure>
+      <h2>Reference render from the dataset</h2>
+      <img id="ref" alt="Reference render of the selected object, made by Sandflow with Blender" width="384" height="384">
+      <figcaption>Made by the original library in Blender. The view on the left is rebuilt here from the same program.</figcaption>
+    </figure>
+    <div id="jointbox">
+      <h2>Joints</h2>
+      <div class="row" style="margin-bottom:10px">
+        <button class="ctl" id="play" aria-pressed="true">Pause motion</button>
+        <button class="ctl" id="rest">Back to rest</button>
+      </div>
+      <div id="joints"></div>
+    </div>
+    <div>
+      <h2>What this build approximated</h2>
+      <ul id="notes"></ul>
+      <p class="credit" id="exact">Nothing: every verb this program uses is ported.</p>
+      <pre id="error" role="alert"></pre>
+    </div>
+    <div>
+      <h2>Program</h2>
+      <textarea id="source" spellcheck="false" aria-label="Program source, editable"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="ctl" id="rebuild">Rebuild from this text</button>
+        <button class="ctl" id="revert">Revert</button>
+      </div>
+    </div>
+  </aside>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>
