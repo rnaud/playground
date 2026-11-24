@@ -16,7 +16,7 @@ import { makeGrass } from './grass.js';
 import { detailed, lookKey, lookMaterial, plain, setIndoorLight, indoorLight } from './look.js';
 
 const $ = (id) => document.getElementById(id);
-const CACHE_VERSION = 'v7';
+const CACHE_VERSION = 'v8';
 const QUALITY = new URLSearchParams(location.search).get('quality') || 'high';      // ?quality=low drops ambient occlusion and bloom
 
 // ---------------------------------------------------------------- the place

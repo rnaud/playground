@@ -19,7 +19,7 @@ runtime, instead of shipping the meshes?
 
 Profiles (`rect`, `circle`, `ellipse`, `slot`, `polygon`, `poly` with arcs, fillets and
 chamfers, `spline`, `superellipse`, `station`, `stroke`), solids (`extrude`, `revolve`,
-`sweep`, `wire`, `loft`, `hull`, `box`, `cylinder`, `tube`, `cone`, `sphere`, `wedge`,
+`sweep`, `wire`, `loft`, `hull`, `field`, `box`, `cylinder`, `tube`, `cone`, `sphere`, `wedge`,
 `torus`, `dome`, `helix`, `spiral`), placement (`at` with `scale` and `anchor`,
 `transform`, `local`, `bbox`, `face` by direction or end cap, `grid`, `ring`, `along`,
 `phyllotaxis`, `branches`, `scatter`, `snap`, `vary`, `Frames.jitter`, `Frame`), booleans
@@ -40,7 +40,9 @@ fusing them; `soften`, `shell`, `bend`, `twist`, `taper`, `dent` and
 `lay` leave the solid as built; `gear`, `knurl` and `thread` are plain cylinders; `snap`
 and `scatter` read a part's surface before its cuts.
 
-Not ported (the program fails with `NotPorted`): `field`, `fill`, `body`, `wrap`, `text`,
+`field` marches tetrahedra as the original does, on a dense grid coarsened to a sample budget.
+
+Not ported (the program fails with `NotPorted`): `fill`, `body`, `wrap`, `text`,
 `ob.edge`, `extrude(until=)`.
 
 Reach, on random samples run natively: 664 of 756 Nature programs, 824 of 840 objaverse

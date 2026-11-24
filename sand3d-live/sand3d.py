@@ -1382,7 +1382,7 @@ def thread(name, d, length, pitch, left=False):
     return cylinder(name, d, length)
 
 
-for _name in ("body", "field", "fill"):
+for _name in ("body", "fill"):
     globals()[_name] = _unported(_name)
 
 
@@ -2047,6 +2047,128 @@ def _face_data(V, F):
     area = np.linalg.norm(cross, axis=1) / 2
     normal = cross / np.maximum(2 * area, 1e-300)[:, None]
     return (a + b + c) / 3, normal, area
+
+
+# ---- field: a closed level surface of a density, by marching tetrahedra (the original's scheme,
+# on a dense grid that is coarsened to a sample budget instead of the original's banded search)
+
+FIELD_SAMPLES = 350000
+_TETS = ((0, 1, 2, 6), (0, 2, 3, 6), (0, 3, 7, 6), (0, 7, 4, 6), (0, 4, 5, 6), (0, 5, 1, 6))
+_CUBE = ((0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0), (0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1))
+_TET_CASES = []
+
+
+def _tetrahedron_cases():
+    """For each tetrahedron of a cube and each inside/outside pattern of its corners, the
+    triangles to emit as pairs of corners (an edge each), wound to face outward."""
+    cube = np.array(_CUBE, dtype=np.float64)
+    cases = []
+    for tet in _TETS:
+        xyz = cube[list(tet)]
+        table = {}
+        for code in range(1, 15):
+            inside = [c for c in range(4) if code & (1 << c)]
+            outside = [c for c in range(4) if not code & (1 << c)]
+            if len(inside) == 1 or len(outside) == 1:
+                one, many = (inside, outside) if len(inside) == 1 else (outside, inside)
+                patterns = [[(one[0], c) for c in many]]
+            else:
+                a, b = inside
+                c, d = outside
+                patterns = [[(a, c), (a, d), (b, d)], [(a, c), (b, d), (b, c)]]
+            oriented = []
+            for pattern in patterns:
+                pattern = np.array(pattern)
+                mid = xyz[pattern].mean(axis=1)
+                normal = np.cross(mid[1] - mid[0], mid[2] - mid[0])
+                if normal.dot(xyz[outside[0]] - xyz[inside[0]]) < 0:
+                    pattern = pattern[[0, 2, 1]]
+                oriented.append(pattern)
+            table[code] = oriented
+        cases.append(table)
+    return cases
+
+
+def field(name, size, density, *, cell, level=0, min_component_cells=3):
+    """Closed isosurface: density(x, y, z) < level. size = (w, d, h), centred in X and Y, Z from 0."""
+    _need_numpy("field")
+    if not _TET_CASES:
+        _TET_CASES.extend(_tetrahedron_cases())
+    size = tuple(float(v) for v in size)
+    cell = float(cell)
+    if _STATE["facets"] is not None:
+        cell = max(cell, math.pi * max(size) / _STATE["facets"])
+    budget = FIELD_SAMPLES * _STATE.get("detail", 1.0)
+    coarsest = (size[0] * size[1] * size[2] / budget) ** (1 / 3)
+    if coarsest > cell:
+        _note("field: sampled more coarsely than asked, to stay light")
+        cell = coarsest
+    ns = [max(2, math.ceil(v / cell)) + 1 for v in size]
+    nx, ny, nz = ns
+    axes = [np.linspace(-v / 2 if c < 2 else 0, v / 2 if c < 2 else v, ns[c]) for c, v in enumerate(size)]
+    Z, Y, X = np.meshgrid(axes[2], axes[1], axes[0], indexing="ij")
+    pts = np.column_stack((X.ravel(), Y.ravel(), Z.ravel()))
+    try:
+        vals = np.asarray(density(pts[:, 0], pts[:, 1], pts[:, 2]), dtype=np.float64)
+        if vals.shape != (len(pts),):
+            raise ValueError("shape")
+    except (TypeError, ValueError):
+        vals = np.fromiter((float(density(*p)) for p in pts), np.float64, len(pts))
+    vals = (vals - level).reshape(nz, ny, nx)
+    edge = np.zeros_like(vals, dtype=bool)
+    edge[0], edge[-1], edge[:, 0], edge[:, -1], edge[:, :, 0], edge[:, :, -1] = True, True, True, True, True, True
+    vals[edge] = np.where(vals[edge] == 0, 1.0, np.abs(vals[edge]))            # the box's faces are outside
+    flat_vals = vals.ravel()
+    plane = nx * ny
+    kk, jj, ii = np.meshgrid(np.arange(nz - 1), np.arange(ny - 1), np.arange(nx - 1), indexing="ij")
+    base = (kk * plane + jj * nx + ii).ravel()
+    corner = np.array([x + y * nx + z * plane for x, y, z in _CUBE])
+    ends_a, ends_b = [], []
+    for t, tet in enumerate(_TETS):
+        ids = base[:, None] + corner[list(tet)][None, :]
+        inside_ = flat_vals[ids] < 0
+        code = inside_[:, 0] * 1 + inside_[:, 1] * 2 + inside_[:, 2] * 4 + inside_[:, 3] * 8
+        for value, patterns in _TET_CASES[t].items():
+            hit = np.nonzero(code == value)[0]
+            if not len(hit):
+                continue
+            for pattern in patterns:
+                ends_a.append(ids[hit][:, pattern[:, 0]])
+                ends_b.append(ids[hit][:, pattern[:, 1]])
+    if not ends_a:
+        raise ValueError("field: the density has no surface inside the box")
+    A, B = np.concatenate(ends_a), np.concatenate(ends_b)                      # (triangles, 3) grid points
+    lo, hi = np.minimum(A, B).ravel().astype(np.int64), np.maximum(A, B).ravel().astype(np.int64)
+    span = np.int64(len(flat_vals) + 1)                                       # (64-bit: Pyodide's default integer is 32)
+    keys, inverse = np.unique(lo * span + hi, return_inverse=True)
+    lo, hi = keys // span, keys % span
+    va, vb = flat_vals[lo], flat_vals[hi]
+    t = (va / np.where(va - vb == 0, 1, va - vb))[:, None]
+    V = pts[lo] + (pts[hi] - pts[lo]) * t
+    F = inverse.reshape(-1, 3)
+    F = F[(F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 0] != F[:, 2])]
+    if min_component_cells:
+        label = np.arange(len(V))
+        for _ in range(400):                                                    # the least label spreads along edges
+            least = label[F].min(axis=1)
+            new = label.copy()
+            np.minimum.at(new, F.reshape(-1), np.repeat(least, 3))
+            new = new[new]
+            if np.array_equal(new, label):
+                break
+            label = new
+        roots, counts = np.unique(label[F[:, 0]], return_counts=True)
+        if len(roots) > 1:
+            keep = {int(roots[np.argmax(counts)])}
+            for root in roots:
+                part = V[label == root]
+                if len(part) and float(np.ptp(part, axis=0).max()) >= min_component_cells * cell:
+                    keep.add(int(root))
+            F = F[np.isin(label[F[:, 0]], list(keep))]
+    used = np.unique(F)
+    remap = -np.ones(len(V), dtype=int)
+    remap[used] = np.arange(len(used))
+    return Node(name, [Piece(_mesh_geom(V[used], remap[F], tags=["field"] * len(F)))])
 
 
 # ---- hull

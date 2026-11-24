@@ -6,9 +6,9 @@ browser and meshed live. No 3D model files are shipped.
 
 - `data/world.json` holds the 100 programs with their attributions (CC BY 4.0, Sandflow):
   household pieces and jointed ones from the objaverse, SimReady and articraft sets, and
-  trees, shrubs, flowers, rocks and garden pieces from the Nature set. The trees, shrubs
-  and most flowers are the Nature set's "realistic" style, built at a reduced level of
-  detail (`lod`), about 15K to 215K triangles each. Each entry also says how big the object
+  trees, shrubs, flowers, rocks and garden pieces from the Nature set. The trees, shrubs,
+  rocks and most flowers are the Nature set's "realistic" style, built at a reduced level
+  of detail (`lod`), about 10K to 215K triangles each. Each entry also says how big the object
   should stand, and which parts to leave out (many Nature objects come on their own patch
   of soil or snow).
 - `worker.js` runs the programs in Web Workers (up to four) with Pyodide and the port in
@@ -30,14 +30,13 @@ the ambient occlusion, bloom and anti-aliasing.
 Made by this page, not by Sand3D: the house shell, terrain, pond, grass, sky and the surface
 detail.
 
-The first visit builds for about 20 seconds on the machine it was made on (Apple M5 Pro);
-each program's result is then kept in IndexedDB, so later visits skip Python. The scene is
-about 4.8 M triangles and drew in 16 to 24 ms a frame there at 1500 x 1125; it has not been
-measured on anything slower.
+The first visit builds for about 70 seconds on the machine it was made on (Apple M5 Pro),
+most of it one boulder; each program's result is then kept in IndexedDB, so later visits
+skip Python. The scene is about 6.3 M triangles and drew in 12 to 23 ms a frame there at
+1500 x 1125; it has not been measured on anything slower.
 
 Jointed objects open with E: the cabinet, the chest of drawers, the dryer, the garden gate;
 the ceiling fan and the wind turbine spin.
 
 Not done: touch controls, shadows from the indoor lamps, doors in the interior door frames,
-realistic rocks (they need the `field` verb, which is not ported), and surface detail on the
-six jointed objects.
+and surface detail on the six jointed objects.
