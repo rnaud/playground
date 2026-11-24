@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sand3D contact sheet</title>
+<style>
+  body { margin:0; background:#14151c; color:#eceef4; font:11px/1.25 system-ui, sans-serif; }
+  #grid { display:grid; grid-template-columns:repeat(auto-fill, 196px); gap:4px; padding:4px; }
+  .card { background:#1d1f29; border:1px solid #343640; padding:2px; }
+  .card.bad { border-color:#f08a7a; } .card.approx { border-color:#f0c674; }
+  .pair { display:flex; gap:2px; } .pair canvas, .pair img { width:94px; height:94px; background:#fff; object-fit:contain; }
+  .pair canvas { background:#2a2c38; }
+  p { margin:2px 0 0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  #top { padding:4px 6px; }
+</style>
+<script type="importmap">{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/",
+  "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js",
+  "three-bvh-csg": "https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.17/build/index.module.js"
+} }</script>
+</head>
+<body>
+<div id="top">Loading…</div>
+<div id="grid"></div>
+<script type="module">
+// A vetting tool: each program built live (left) beside the dataset's render (right).
+// sheet.html?data=<json>&from=0&n=30
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { build, dispose, loadCsg } from './build.js';
+
+const q = new URLSearchParams(location.search);
+const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/';
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(188, 188, false);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#e9e9ee');
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.7;
+const sun = new THREE.DirectionalLight('#ffffff', 1.6);
+sun.position.set(1.5, 4.5, -3);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 100);
+
+const data = await (await fetch(q.get('data'))).json();
+const from = Number(q.get('from') || 0), n = Number(q.get('n') || 30);
+const items = (data.items || data).slice(from, from + n);
+const [{ loadPyodide }, shim] = await Promise.all([import(`${PYODIDE}pyodide.mjs`), fetch('sand3d.py').then((r) => r.text()), loadCsg()]);
+const py = await loadPyodide({ indexURL: PYODIDE });
+await py.loadPackage('numpy');
+py.FS.writeFile('/home/pyodide/sand3d.py', shim);
+py.runPython('import sand3d');
+const run = py.globals.get('sand3d').run;
+const out = [];
+for (const [i, item] of items.entries()) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = '<div class="pair"><canvas width="188" height="188"></canvas><img></div><p class="t"></p><p class="s"></p>';
+  card.querySelector('img').src = item.img || '';
+  card.querySelector('.t').textContent = `${from + i} ${item.title}`;
+  document.getElementById('grid').append(card);
+  const entry = { i: from + i, key: item.key, title: item.title };
+  try {
+    const t0 = performance.now();
+    const described = JSON.parse(run(item.program, item.entry));
+    const t1 = performance.now();
+    const b = build(described);
+    const t2 = performance.now();
+    const box = new THREE.Box3().setFromObject(b.root), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
+    const r = Math.max(size.x, size.y, size.z) || 1;
+    scene.add(b.root);
+    camera.position.set(c.x + r * 1.5, c.y + r * 1.15, c.z - r * 1.9);
+    camera.near = r / 100; camera.far = r * 20; camera.updateProjectionMatrix();
+    camera.lookAt(c);
+    renderer.render(scene, camera);
+    card.querySelector('canvas').getContext('2d').drawImage(renderer.domElement, 0, 0, 188, 188);
+    scene.remove(b.root);
+    dispose(b.root);
+    Object.assign(entry, { ok: true, tris: Math.round(b.stats.triangles), py: Math.round(t1 - t0), mesh: Math.round(t2 - t1), notes: described.notes, uncut: b.stats.uncut, size: [size.x, size.y, size.z].map((v) => +v.toFixed(3)) });
+    card.querySelector('.s').textContent = `${entry.tris}t ${entry.py}+${entry.mesh}ms ${size.x.toFixed(2)}×${size.y.toFixed(2)}×${size.z.toFixed(2)}m ${described.notes.map((s) => s.split(':')[0]).join(',')}`;
+    if (described.notes.length || b.stats.uncut) card.classList.add('approx');
+  } catch (error) {
+    entry.ok = false; entry.error = String(error.message || error).trim().split('\n').pop();
+    card.classList.add('bad');
+    card.querySelector('.s').textContent = entry.error;
+  }
+  out.push(entry);
+  document.getElementById('top').textContent = `${out.length}/${items.length}`;
+  await new Promise((r) => setTimeout(r));
+}
+window.sheet = out;
+document.getElementById('top').textContent = `done ${out.filter((e) => e.ok).length}/${items.length}`;
+</script>
+</body>
+</html>

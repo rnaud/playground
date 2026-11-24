@@ -172,6 +172,8 @@ def facets(n=None, smooth=None):
         return "auto" if _STATE["facets"] is None else _STATE["facets"]
     previous = _STATE["facets"]
     _STATE["facets"] = None if n == "auto" else int(n)
+    if smooth is not None:
+        _STATE["smooth"] = bool(smooth)
     return _FacetScope(n, previous)
 
 
@@ -185,7 +187,7 @@ def units(name=None):
 
 
 def empty_scene():
-    _STATE.update(facets=None, unit="mm", scale=0.001)
+    _STATE.update(facets=None, unit="mm", scale=0.001, smooth=False)
     del NOTES[:]
     _JOINTS.clear()
 
@@ -630,7 +632,6 @@ class Frames(list):
     def __add__(self, other):
         return Frames(list(self) + list(other))
 
-    jitter = _unported("Frames.jitter")
 
 
 def _frame_of(m):
@@ -647,7 +648,9 @@ class Piece:
 
     def points(self):
         g = self.geom
-        if g["t"] == "extrude":
+        if g["t"] == "mesh":
+            pts = [tuple(p) for p in g["v"]]
+        elif g["t"] == "extrude":
             pts = [(x, y, z) for loop in g["loops"] for x, y in loop for z in (g["lo"], g["hi"])]
         else:
             pts = [p for ring in g["rings"] for p in ring]
@@ -781,6 +784,7 @@ def delete(ob):
 
 
 def _solid(name, geom, matrix=I4):
+    geom.setdefault("flat", _STATE["facets"] is not None and not _STATE.get("smooth"))
     node = Node(name, [Piece(geom)])
     node.basis = matrix
     return node
@@ -829,10 +833,24 @@ def _face(ob, which):
         raise ValueError(f"{ob.name!r} is a group: use bbox(group, \"+Z\") or a part's face")
     word = str(which).split(".")[-1].strip().lower()
     word = _SIDE_WORDS.get(word, word)
+    if word in ("start", "end") and ob.pieces and ob.pieces[0].geom["t"] == "rings":
+        piece = ob.pieces[0]
+        rings_ = piece.geom["rings"]
+        ring_ = [mpoint(mmul(ob.basis, piece.m), p) for p in (rings_[0] if word == "start" else rings_[-1])]
+        other = [mpoint(mmul(ob.basis, piece.m), p) for p in (rings_[1] if word == "start" else rings_[-2])]
+        centre = sum(ring_, Vec(0, 0, 0)) / len(ring_)
+        out = centre - sum(other, Vec(0, 0, 0)) / len(other)
+        nrm = Vec(0, 0, 0)
+        for a, b in zip(ring_, ring_[1:] + ring_[:1]):
+            nrm = nrm + (a - centre).cross(b - centre)
+        nrm = nrm.normalized() if nrm.length > 1e-12 else out.normalized()
+        if nrm.dot(out) < 0:
+            nrm = -nrm
+        return Frame(centre, nrm)._read_on(ob, ob.basis)
     try:
         (axis, sign), = _sides(word, "face")
     except ValueError:
-        raise NotPorted(f"face({which!r}): only top, bottom and directions are ported")
+        raise NotPorted(f"face({which!r}): only top, bottom, start, end and directions are ported")
     normal = [0.0, 0.0, 0.0]
     normal[axis] = float(sign)
     n = mdir(ob.basis, normal).normalized()
@@ -1075,8 +1093,7 @@ def along(path, pitch=None, count=None, spin=0, span=(0, 1)):
     return Frames(out)
 
 
-for _name in ("phyllotaxis", "branches", "vary", "scatter", "snap", "tufts"):
-    globals()[_name] = _unported(_name)
+
 
 
 # ---------------------------------------------------------------- solids
@@ -1349,7 +1366,7 @@ def thread(name, d, length, pitch, left=False):
     return cylinder(name, d, length)
 
 
-for _name in ("body", "hull", "field", "fill", "noise", "waves"):
+for _name in ("body", "field", "fill"):
     globals()[_name] = _unported(_name)
 
 
@@ -1597,12 +1614,10 @@ soften = _approximate("soften", "edges left sharp")
 smooth = _approximate("smooth", "shading left as built")
 shell = _approximate("shell", "left solid")
 dent = _approximate("dent", "surface left as built")
-displace = _approximate("displace", "surface left as built")
 bend = _approximate("bend", "left straight")
 twist = _approximate("twist", "left untwisted")
 taper = _approximate("taper", "left untapered")
 lay = _approximate("lay", "left where it was placed")
-split = _unported("split")
 
 
 # ---------------------------------------------------------------- materials, lights
@@ -1641,9 +1656,9 @@ def material(ob, kind, color=None, roughness=None, metallic=None, opacity=None, 
     if kind not in PRESETS:
         raise ValueError(f"material: {kind!r} is none of the presets: {', '.join(PRESETS)}")
     look = dict(PRESETS[kind], kind=kind)
+    function = None
     if callable(color):
-        _note("material: a colour function shown as the preset's flat colour")
-        color = None
+        function, color = color, None
     if color is not None and not isinstance(color, str):
         color = "#" + "".join(f"{max(0, min(255, round(c * 255))):02x}" for c in color[:3])
     for key, value in (("color", color), ("roughness", roughness), ("metallic", metallic),
@@ -1651,6 +1666,8 @@ def material(ob, kind, color=None, roughness=None, metallic=None, opacity=None, 
                        ("ior", more.get("ior"))):
         if value is not None:
             look[key] = value
+    if function is not None:
+        look["function"] = function
     for o in _flat([ob]):
         o.look = look
     return ob
@@ -1771,6 +1788,891 @@ def export(root, path=None, *args, **kwargs):
     return None
 
 
+# ---------------------------------------------------------------- meshes, for the verbs that read or move a surface
+# hull, displace, scatter, snap, tufts and colour functions need real triangles. They are
+# made here with numpy, only for the pieces those verbs touch; the other pieces still go
+# to three.js as outlines and rings. noise, vary, jitter, scatter, phyllotaxis and tufts
+# follow the original library's arithmetic (sand3d, Apache-2.0).
+
+try:
+    import numpy as np
+except ImportError:                      # the plain-solid verbs work without it
+    np = None
+
+FACE_BUDGET = 9000        # a displaced piece is refined up to about this many triangles
+
+
+def _need_numpy(verb):
+    if np is None:
+        raise NotPorted(f"{verb} needs numpy, which this Python does not have")
+
+
+def _earclip(loop):
+    """Triangles (index triples) of a simple polygon given as 2D points."""
+    n = len(loop)
+    if n < 3:
+        return []
+    idx = list(range(n))
+    if _area(loop) < 0:
+        idx.reverse()
+    out, guard = [], 0
+    while len(idx) > 3 and guard < 4 * n * n:
+        guard += 1
+        m = len(idx)
+        clipped = False
+        for k in range(m):
+            i0, i1, i2 = idx[k - 1], idx[k], idx[(k + 1) % m]
+            a, b, c = loop[i0], loop[i1], loop[i2]
+            cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+            if cross <= 1e-14:
+                continue
+            ear = True
+            for j in idx:
+                if j in (i0, i1, i2):
+                    continue
+                p = loop[j]
+                d1 = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+                d2 = (c[0] - b[0]) * (p[1] - b[1]) - (c[1] - b[1]) * (p[0] - b[0])
+                d3 = (a[0] - c[0]) * (p[1] - c[1]) - (a[1] - c[1]) * (p[0] - c[0])
+                if d1 >= 0 and d2 >= 0 and d3 >= 0:
+                    ear = False
+                    break
+            if ear:
+                out.append((i0, i1, i2))
+                idx.pop(k)
+                clipped = True
+                break
+        if not clipped:                   # a sliver or a self-touching outline: fan what is left
+            break
+    for k in range(1, len(idx) - 1):
+        out.append((idx[0], idx[k], idx[k + 1]))
+    return out
+
+
+def _bridged(outer, holes):
+    """One outline for a loop and its holes, each hole joined to the outer by a slit."""
+    loop = list(outer)
+    for hole in sorted(holes, key=lambda h: -max(p[0] for p in h)):
+        k = max(range(len(hole)), key=lambda i: hole[i][0])
+        j = min(range(len(loop)), key=lambda i: (loop[i][0] - hole[k][0]) ** 2 + (loop[i][1] - hole[k][1]) ** 2)
+        loop = loop[:j + 1] + hole[k:] + hole[:k + 1] + loop[j:]
+    return loop
+
+
+def _inside2(p, loop):
+    hit = False
+    for a, b in zip(loop, loop[1:] + loop[:1]):
+        if (a[1] > p[1]) != (b[1] > p[1]) and p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]:
+            hit = not hit
+    return hit
+
+
+def _miter_ring(loop, inset):
+    if not inset:
+        return loop
+    out, n = [], len(loop)
+    for i in range(n):
+        a, b, c = loop[i - 1], loop[i], loop[(i + 1) % n]
+        d0 = Vec(b[0] - a[0], b[1] - a[1]).normalized()
+        d1 = Vec(c[0] - b[0], c[1] - b[1]).normalized()
+        n0, n1 = Vec(d0[1], -d0[0]), Vec(d1[1], -d1[0])
+        bis = (n0 + n1)
+        bis = bis.normalized() if bis.length > 1e-9 else n0
+        stretch = 1 / max(bis.dot(n0), 0.1)
+        out.append((b[0] - bis[0] * inset * stretch, b[1] - bis[1] * inset * stretch))
+    return out
+
+
+def _tess_extrude(g):
+    verts, tris, tags = [], [], []
+    outers = [l for l in g["loops"] if len(l) > 2 and _area(l) > 0]
+    holes = [l for l in g["loops"] if len(l) > 2 and _area(l) < 0]
+    inset = (g["hi"] - g["lo"]) * math.tan(math.radians(g.get("taper") or 0))
+    turn = math.radians(g.get("twist") or 0)
+    c, s = math.cos(turn), math.sin(turn)
+    for outer in outers:
+        mine = [h for h in holes if _inside2(h[0], outer)]
+        loops = [outer] + mine
+        flat = _bridged(outer, mine) if mine else outer
+        index = {}
+        base = len(verts)
+        for loop in loops:
+            top = _miter_ring(loop, inset)
+            for (x, y), (tx, ty) in zip(loop, top):
+                index[(x, y)] = len(verts)
+                verts.append((x, y, g["lo"]))
+                verts.append((tx * c - ty * s, tx * s + ty * c, g["hi"]))
+        for a, b, cc in _earclip(flat):
+            ia, ib, ic = index[flat[a]], index[flat[b]], index[flat[cc]]
+            tris.append((ic, ib, ia)); tags.append("bottom")
+            tris.append((ia + 1, ib + 1, ic + 1)); tags.append("top")
+        for loop in loops:
+            n = len(loop)
+            for j in range(n):
+                i0, i1 = index[loop[j]], index[loop[(j + 1) % n]]
+                tris.append((i0, i1, i1 + 1)); tags.append("side")
+                tris.append((i0, i1 + 1, i0 + 1)); tags.append("side")
+    return verts, tris, tags
+
+
+def _cap_ring(ring, verts_offset, flip):
+    pts = [Vec(p) for p in ring]
+    n = Vec(0, 0, 0)
+    for a, b in zip(pts, pts[1:] + pts[:1]):
+        n = n + Vec((a[1] - b[1]) * (a[2] + b[2]), (a[2] - b[2]) * (a[0] + b[0]), (a[0] - b[0]) * (a[1] + b[1]))
+    if n.length < 1e-12:
+        return []
+    n = n.normalized()
+    u = Vec(0, 1, 0) if abs(n[0]) > 0.9 else Vec(1, 0, 0)
+    u = (u - n * u.dot(n)).normalized()
+    v = n.cross(u)
+    flat = [(p.dot(u), p.dot(v)) for p in pts]
+    out = []
+    for a, b, c in _earclip(flat):
+        out.append((verts_offset + c, verts_offset + b, verts_offset + a) if flip else
+                   (verts_offset + a, verts_offset + b, verts_offset + c))
+    return out
+
+
+def _tess_rings(g):
+    rings, count = g["rings"], len(g["rings"])
+    n = len(rings[0])
+    verts = [p for ring in rings for p in ring]
+    tris, tags = [], []
+    for k in range(count if g["loop"] else count - 1):
+        a, b = k * n, ((k + 1) % count) * n
+        for j in range(n):
+            j1 = (j + 1) % n
+            tris.append((a + j, a + j1, b + j1)); tris.append((a + j, b + j1, b + j))
+            tags += ["side", "side"]
+    if g["caps"] and not g["loop"]:
+        for t in _cap_ring(rings[0], 0, True):
+            tris.append(t); tags.append("start")
+        for t in _cap_ring(rings[-1], (count - 1) * n, False):
+            tris.append(t); tags.append("end")
+    return verts, tris, tags
+
+
+def _mesh_of(geom, matrix=I4):
+    """(V, F, tags) of a piece's geometry, placed by `matrix`: welded, empty triangles
+    dropped, turned outward."""
+    _need_numpy("this verb")
+    if geom["t"] == "mesh":
+        V, F, tags = np.array(geom["v"], dtype=float).reshape(-1, 3), np.array(geom["f"], dtype=int).reshape(-1, 3), list(geom.get("tags") or [])
+    else:
+        verts, tris, tags = _tess_extrude(geom) if geom["t"] == "extrude" else _tess_rings(geom)
+        V, F = np.array(verts, dtype=float).reshape(-1, 3), np.array(tris, dtype=int).reshape(-1, 3)
+    if len(F) == 0:
+        return V, F, []
+    if matrix != I4:
+        M = np.array(matrix, dtype=float).reshape(4, 4)
+        V = V @ M[:3, :3].T + M[:3, 3]
+        if np.linalg.det(M[:3, :3]) < 0:
+            F = F[:, ::-1]
+    if geom["t"] != "mesh" or not geom.get("welded"):
+        span = max(float(np.ptp(V, axis=0).max()), 1e-9)
+        keys = np.round(V / (span * 1e-7)).astype(np.int64)
+        _, first, inverse = np.unique(keys, axis=0, return_index=True, return_inverse=True)
+        V, F = V[first], inverse.reshape(-1)[F]
+    keep = (F[:, 0] != F[:, 1]) & (F[:, 1] != F[:, 2]) & (F[:, 0] != F[:, 2])
+    if len(tags) == len(F):
+        tags = [t for t, k in zip(tags, keep) if k]
+    else:
+        tags = []
+    F = F[keep]
+    if len(F) and not geom.get("thin"):
+        a, b, c = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
+        if float(np.einsum("ij,ij->i", a, np.cross(b - a, c - a)).sum()) < 0:
+            F = F[:, ::-1]
+    return V, F, tags
+
+
+def _mesh_geom(V, F, tags=None, flat=None, thin=False, like=None):
+    g = {"t": "mesh", "v": V, "f": F, "tags": tags or [], "welded": True, "thin": thin,
+         "flat": (_STATE["facets"] is not None and not _STATE.get("smooth")) if flat is None else flat}
+    if like is not None:
+        g["flat"] = like.get("flat", g["flat"]) if flat is None else flat
+    return g
+
+
+def _bake(ob):
+    """Every piece of a part as a mesh in the part's own space."""
+    for piece in ob.pieces:
+        if piece.geom["t"] != "mesh" or piece.m != I4:
+            V, F, tags = _mesh_of(piece.geom, piece.m)
+            piece.geom = _mesh_geom(V, F, tags, flat=piece.geom.get("flat"), thin=piece.geom.get("thin", False))
+            piece.m = I4
+
+
+def _face_data(V, F):
+    a, b, c = V[F[:, 0]], V[F[:, 1]], V[F[:, 2]]
+    cross = np.cross(b - a, c - a)
+    area = np.linalg.norm(cross, axis=1) / 2
+    normal = cross / np.maximum(2 * area, 1e-300)[:, None]
+    return (a + b + c) / 3, normal, area
+
+
+# ---- hull
+
+def hull(name, points):
+    """Closed convex hull of points, where they are given, with flat faces."""
+    _need_numpy("hull")
+    coords = sorted({tuple(float(c) for c in (p.origin if isinstance(p, Frame) else p)) for p in points})
+    if len(coords) < 4:
+        raise ValueError("hull: at least 4 distinct points are required")
+    P = np.array(coords)
+    extent = float(np.ptp(P, axis=0).max())
+    Q = (P - P[0]) / extent
+    eps = 1e-9
+    i0 = 0
+    i1 = int(np.argmax(((Q - Q[i0]) ** 2).sum(axis=1)))
+    axis = (Q[i1] - Q[i0]) / np.linalg.norm(Q[i1] - Q[i0])
+    i2 = int(np.argmax((np.cross(Q - Q[i0], axis) ** 2).sum(axis=1)))
+    normal = np.cross(Q[i1] - Q[i0], Q[i2] - Q[i0])
+    if np.linalg.norm(normal) < 1e-7:
+        raise ValueError("hull: points are coplanar or degenerate")
+    normal /= np.linalg.norm(normal)
+    d = (Q - Q[i0]) @ normal
+    i3 = int(np.argmax(np.abs(d)))
+    if abs(d[i3]) < 1e-7:
+        raise ValueError("hull: points are coplanar or degenerate")
+    centre = Q[[i0, i1, i2, i3]].mean(axis=0)
+    faces = []
+
+    def add(a, b, c):
+        n = np.cross(Q[b] - Q[a], Q[c] - Q[a])
+        if n @ (centre - Q[a]) > 0:
+            b, c, n = c, b, -n
+        ln = np.linalg.norm(n)
+        faces.append((a, b, c, n / ln if ln > 0 else n))
+    for tri in ((i0, i1, i2), (i0, i1, i3), (i0, i2, i3), (i1, i2, i3)):
+        add(*tri)
+    for p in range(len(Q)):
+        if p in (i0, i1, i2, i3):
+            continue
+        seen = [f for f in faces if f[3] @ (Q[p] - Q[f[0]]) > eps]
+        if not seen:
+            continue
+        edges = {}
+        for a, b, c, _ in seen:
+            for e in ((a, b), (b, c), (c, a)):
+                if (e[1], e[0]) in edges:
+                    del edges[(e[1], e[0])]
+                else:
+                    edges[e] = True
+        gone = {id(f) for f in seen}
+        faces[:] = [f for f in faces if id(f) not in gone]
+        for a, b in edges:
+            add(a, b, p)
+    F = np.array([f[:3] for f in faces], dtype=int)
+    used = np.unique(F)
+    remap = -np.ones(len(P), dtype=int)
+    remap[used] = np.arange(len(used))
+    node = Node(name, [Piece(_mesh_geom(P[used], remap[F], flat=True))])
+    return node
+
+
+# ---- noise (the original's seeded gradient and cell noise)
+
+NOISES = ("perlin", "cells", "ridged", "turbulence")
+
+
+def _mix(h, seed):
+    h = np.asarray(h ^ np.uint32(seed & 0xFFFFFFFF), dtype=np.uint32)
+    with np.errstate(over="ignore"):
+        h ^= h >> np.uint32(16)
+        h *= np.uint32(2246822519)
+        h ^= h >> np.uint32(13)
+        h *= np.uint32(3266489917)
+        h ^= h >> np.uint32(16)
+    return h
+
+
+def noise(x, y, z, seed=0, kind="perlin"):
+    """Float64 noise in [-1, 1]; scalars or broadcastable arrays."""
+    _need_numpy("noise")
+    import itertools
+    if kind not in NOISES:
+        raise ValueError(f"noise: kind must be one of {NOISES}")
+    q = np.broadcast_arrays(*[np.asarray(a, dtype=np.float64) for a in (x, y, z)])
+    base = [np.floor(a).astype(np.int64) for a in q]
+    frac = [a - b for a, b in zip(q, base)]
+    steps = (-1, 0, 1) if kind == "cells" else (0, 1)
+    with np.errstate(over="ignore"):
+        products = [{d: (b.astype(np.uint32) + np.uint32(d & 0xFFFFFFFF)) * np.uint32(k) for d in steps}
+                    for b, k in zip(base, (1597334677, 3812015801, 2798796415))]
+    if kind == "cells":
+        distance = np.full(q[0].shape, np.inf)
+        for delta in itertools.product((-1, 0, 1), repeat=3):
+            hashed = products[0][delta[0]] ^ products[1][delta[1]] ^ products[2][delta[2]]
+            dist = np.zeros(q[0].shape)
+            for c in range(3):
+                off = _mix(hashed, seed + 1013 * (c + 1)).astype(np.float64) / 4294967296
+                dist += (delta[c] + off - frac[c]) ** 2
+            distance = np.minimum(distance, dist)
+        result = 1 - 2 * np.minimum(1, np.sqrt(distance) / math.sqrt(3))
+    else:
+        fade = [f * f * f * (f * (f * 6 - 15) + 10) for f in frac]
+        result = np.zeros(q[0].shape)
+        for corner in itertools.product((0, 1), repeat=3):
+            h = _mix(products[0][corner[0]] ^ products[1][corner[1]] ^ products[2][corner[2]], seed)
+            axis = h % 3
+            dot = np.zeros(q[0].shape)
+            for c in range(3):
+                sign = np.where((h >> (c + 3)) & 1, 1.0, -1.0)
+                dot = dot + np.where(axis == c, 0.0, sign * (frac[c] - corner[c]))
+            weight = np.ones(q[0].shape)
+            for c in range(3):
+                weight = weight * (fade[c] if corner[c] else 1 - fade[c])
+            result = result + weight * dot
+        result = np.clip(result, -1, 1)
+        if kind == "ridged":
+            result = 1 - 2 * np.abs(result)
+        if kind == "turbulence":
+            result = 2 * np.abs(result) - 1
+    return float(result) if result.ndim == 0 else result
+
+
+def waves(wavelength, direction=None, centers=None, sharpness=0, spread=0, decay=None, phase=0, seed=0):
+    """A bounded height field f(x, y, z) in [-1, 1]: one cosine train, or rings round centres."""
+    _need_numpy("waves")
+    if spread:
+        _note("waves: spread left out, one wave train")
+    angle = 0.0
+    if isinstance(direction, (int, float)):
+        angle = math.radians(direction)
+    elif isinstance(direction, str):
+        v = _axis(direction, "waves")
+        angle = math.atan2(v[1], v[0])
+    elif direction is not None:
+        angle = math.atan2(direction[1], direction[0])
+    cx, sy, k, ph = math.cos(angle), math.sin(angle), 2 * math.pi / wavelength, math.radians(phase)
+
+    def shape(t):
+        return np.cos(t + sharpness * np.sin(t))
+
+    def f(x, y, z):
+        x, y = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+        if centers:
+            total, env = np.zeros(np.broadcast(x, y).shape), np.zeros(np.broadcast(x, y).shape)
+            for px, py in centers:
+                r = np.hypot(x - px, y - py)
+                e = np.exp(-r / decay) if decay else 1.0
+                total = total + shape(k * r - ph) * e
+                env = env + e
+            out = total / (np.maximum(env, 1) if decay else len(centers))
+        else:
+            out = shape(k * (x * cx + y * sy) - ph)
+        return float(out) if np.ndim(out) == 0 else out
+    return f
+
+
+# ---- seeded draws (the original's generators, so the same seeds give the same layouts)
+
+def _random(seed, verb):
+    import random
+    if not isinstance(seed, int):
+        raise ValueError(f"{verb}: seed must be an integer")
+    return random.Random(seed)
+
+
+def vary(value, spread, n, seed=0):
+    rng = _random(seed, "vary")
+    return [float(value + rng.triangular(-spread, spread, 0)) for _ in range(n)]
+
+
+def _jitter(self, rx=0, ry=0, rz=0, x=0, y=0, z=0, seed=0):
+    rng = _random(seed, "jitter")
+    out = Frames()
+    for f in self:
+        a, b, c, dx, dy, dz = [rng.triangular(-v, v, 0) for v in (rx, ry, rz, x, y, z)]
+        out.append(f.move(dx, dy, dz).turn(a, b, c))
+    return out
+
+
+Frames.jitter = _jitter
+
+
+def phyllotaxis(n, d, h=0, angle=137.508, on=None):
+    base = on if on is not None else Frame()
+    out = Frames()
+    for k in range(n):
+        a = math.radians(k * angle)
+        radial = base.x * math.cos(a) + base.y * math.sin(a)
+        r = d / 2 if h else d / 2 * math.sqrt((k + 0.5) / n)
+        origin = base.origin + radial * r + base.z * (h * (k + 0.5) / n)
+        out.append(base._kept(Frame(origin, radial if h else base.z, base.z if h else base.z.cross(radial))))
+    return out
+
+
+class _Axis:
+    def __init__(self, path, d, level, name, parent):
+        self.path, self.d, self.level, self.name, self.parent = path, d, level, name, parent
+
+
+class _Branches(list):
+    def __init__(self):
+        list.__init__(self)
+        self.tips = Frames()
+
+
+def _frame_along(pts, lengths, d, initial):
+    """A frame at arc length d of a path: Z its tangent, Y carried from `initial`."""
+    j = 0
+    while j < len(lengths) - 2 and lengths[j + 1] < d:
+        j += 1
+    f = (d - lengths[j]) / max(lengths[j + 1] - lengths[j], 1e-12)
+    a, b = Vec(pts[j]), Vec(pts[j + 1])
+    tangent = (b - a).normalized()
+    up = initial.y - tangent * initial.y.dot(tangent)
+    if up.length < 1e-6:
+        up = initial.x - tangent * initial.x.dot(tangent)
+    return initial._kept(Frame(a + (b - a) * f, tangent, up.normalized()))
+
+
+def branches(length, d, levels=3, children=3, attach=(0.45, 0.9), angle=45, azimuth=137.508,
+             length_ratio=0.55, diameter_ratio=0.55, tip_ratio=0.15, jitter=0, seed=0, on=None,
+             wander=0, droop=0, *, step=None):
+    """Depth-first axes and leaf-tip frames, straight or curved: the original's draws and
+    layout, its curves sampled more coarsely and without its bend limit."""
+    import random
+    base = on if on is not None else Frame()
+    rng, out = random.Random(seed), _Branches()
+    curved = bool(wander or droop)
+
+    def grow(frame, size, diameter, level, name, parent):
+        path = Path([frame.origin, frame.point(z=size)])
+        if curved:
+            turns = [(rng.uniform(0, 360), rng.uniform(-wander, wander)) if wander else (0, 0) for _ in range(8)]
+            gravity = -base.z if droop >= 0 else base.z
+            heading, controls = frame, [frame.origin]
+            for bearing, lean in turns:
+                if wander:
+                    heading = heading.turn(rz=bearing).turn(ry=lean)
+                if droop:
+                    left = math.acos(max(-1.0, min(1.0, heading.z.dot(gravity))))
+                    turn = min(math.radians(abs(droop) / 8), left)
+                    axis_ = heading.z.cross(gravity)
+                    axis_ = axis_.normalized() if axis_.length > 1e-7 else heading.x
+                    r = mrot(axis_, math.degrees(turn))
+                    heading = Frame(heading.origin, mdir(r, heading.z), mdir(r, heading.y))
+                heading = heading.offset(size / 8)
+                controls.append(heading.origin)
+            path = Path(_centripetal([tuple(c) for c in controls], False, steps=2))
+        pts = path.points
+        lengths = [0.0]
+        for a, b in zip(pts, pts[1:]):
+            lengths.append(lengths[-1] + math.dist(a, b))
+        axis = _Axis(path, [(0, diameter), (1, diameter * tip_ratio)], level, name, parent)
+        out.append(axis)
+        if level == levels or children == 0:
+            out.tips.append(_frame_along(pts, lengths, lengths[-1], frame) if curved else frame.offset(size))
+            return
+        for j in range(children):
+            u = attach[0] + (attach[1] - attach[0]) * (j / (children - 1) if children > 1 else 0.5)
+            lean = angle * (1 + rng.uniform(-jitter, jitter))
+            child_length = size * length_ratio * (1 + rng.uniform(-jitter, jitter))
+            bearing = j * azimuth
+            if jitter:
+                bearing += rng.uniform(-jitter, jitter) * azimuth
+            attachment = _frame_along(pts, lengths, u * lengths[-1], frame) if curved else frame.move(z=size * u)
+            grow(attachment.turn(rz=bearing).turn(ry=lean), max(child_length, 1e-9), diameter * diameter_ratio,
+                 level + 1, f"{name}/{j}", axis)
+    grow(base, length, d, 0, "root", None)
+    return out
+
+
+def _surface_parts(targets):
+    """(V, F) of every part given, in the space the parts are in (a group: its parent's)."""
+    roots = targets if isinstance(targets, (list, tuple)) else [targets]
+    out = []
+    for root in _flat(roots):
+        if root.pieces is not None:
+            found = [(root, root.basis)]
+        else:
+            found = [(part, m) for part, m in _walk(root, root.basis)]
+        for part, m in found:
+            for piece in part.pieces:
+                V, F, _ = _mesh_of(piece.geom, mmul(m, piece.m))
+                if len(F):
+                    out.append((V, F))
+    return out
+
+
+def _scatter_best(n, candidate, position):
+    points, out = [], []
+    for i in range(n):
+        best, best_d = None, -1.0
+        for _ in range(16):
+            c = candidate()
+            p = position(c)
+            d = min((sum((a - b) ** 2 for a, b in zip(p, q)) for q in points), default=math.inf)
+            if d > best_d:
+                best, best_d = c, d
+        points.append(tuple(position(best)))
+        out.append(best)
+    return out
+
+
+def scatter(n, size, seed=0, surface=False, on=None):
+    """Evenly spread frames inside an ellipsoid, on it, or on the surface of parts."""
+    import bisect
+    rng = _random(seed, "scatter")
+    if _is_ob(size) or (isinstance(size, (list, tuple)) and size and _is_ob(size[0])):
+        _need_numpy("scatter")
+        tris, cumulative, area = [], [], 0.0
+        for V, F in _surface_parts(size):
+            centre, normal, areas = _face_data(V, F)
+            for k in range(len(F)):
+                if areas[k] > 0:
+                    area += float(areas[k])
+                    cumulative.append(area)
+                    tris.append((Vec(V[F[k, 0]]), Vec(V[F[k, 1]]), Vec(V[F[k, 2]]), Vec(normal[k])))
+        if not area:
+            raise ValueError("scatter: parts need a nonzero surface area")
+
+        def candidate():
+            a, b, c, normal = tris[min(bisect.bisect_right(cumulative, rng.random() * area), len(tris) - 1)]
+            u, v = math.sqrt(rng.random()), rng.random()
+            return Frame(a * (1 - u) + b * (u * (1 - v)) + c * (u * v), normal)
+        return Frames(_scatter_best(n, candidate, lambda f: f.origin))
+    base = on if on is not None else Frame()
+    radii = [v / 2 for v in size]
+
+    def candidate():
+        while True:
+            z, a = rng.uniform(-1, 1), rng.uniform(0, 2 * math.pi)
+            r = math.sqrt(max(0, 1 - z * z))
+            unit = (r * math.cos(a), r * math.sin(a), z)
+            if not surface or rng.random() <= min(radii) * math.sqrt(sum((u / q) ** 2 for u, q in zip(unit, radii))):
+                break
+        k = 1 if surface else rng.random() ** (1 / 3)
+        return Vec([u * q * k for u, q in zip(unit, radii)])
+    out = Frames()
+    for p in _scatter_best(n, candidate, lambda p: p):
+        normal = base.x * p[0] + base.y * p[1] + base.z * p[2]
+        if normal.length < 1e-12:
+            normal = base.z
+        out.append(base._kept(Frame(base.origin + (base.x * p[0] + base.y * p[1] + base.z * p[2]), normal)))
+    return out
+
+
+def _closest_on_triangles(p, a, b, c):
+    """The closest point to p on each triangle (a, b, c): arrays of shape (k, 3)."""
+    ab, ac, ap = b - a, c - a, p - a
+    d1, d2 = (ab * ap).sum(1), (ac * ap).sum(1)
+    bp = p - b
+    d3, d4 = (ab * bp).sum(1), (ac * bp).sum(1)
+    cp = p - c
+    d5, d6 = (ab * cp).sum(1), (ac * cp).sum(1)
+    vc, vb, va = d1 * d4 - d3 * d2, d5 * d2 - d1 * d6, d3 * d6 - d5 * d4
+    with np.errstate(divide="ignore", invalid="ignore"):
+        denom = 1 / np.where(va + vb + vc == 0, 1, va + vb + vc)
+        v, w = vb * denom, vc * denom
+        out = a + ab * v[:, None] + ac * w[:, None]
+        e = (d4 - d3) / np.where((d4 - d3) + (d5 - d6) == 0, 1, (d4 - d3) + (d5 - d6))
+        out = np.where(((va <= 0) & (d4 - d3 >= 0) & (d5 - d6 >= 0))[:, None], b + (c - b) * e[:, None], out)
+        t = d2 / np.where(d2 - d6 == 0, 1, d2 - d6)
+        out = np.where(((vb <= 0) & (d2 >= 0) & (d6 <= 0))[:, None], a + ac * t[:, None], out)
+        s = d1 / np.where(d1 - d3 == 0, 1, d1 - d3)
+        out = np.where(((vc <= 0) & (d1 >= 0) & (d3 <= 0))[:, None], a + ab * s[:, None], out)
+    out = np.where(((d6 >= 0) & (d5 <= d6))[:, None], c, out)
+    out = np.where(((d3 >= 0) & (d4 <= d3))[:, None], b, out)
+    out = np.where(((d1 <= 0) & (d2 <= 0))[:, None], a, out)
+    return out
+
+
+def snap(targets, points, direction=None):
+    """Frames on the surface of targets: the nearest spot, or where a line along direction first meets it."""
+    _need_numpy("snap")
+    ray = None
+    if direction is not None:
+        ray = np.array(_axis(direction, "snap") if isinstance(direction, str) else Vec(direction).normalized())
+    parts = _surface_parts(targets)
+    if not parts:
+        return Frames()
+    A = np.concatenate([V[F[:, 0]] for V, F in parts])
+    B = np.concatenate([V[F[:, 1]] for V, F in parts])
+    C = np.concatenate([V[F[:, 2]] for V, F in parts])
+    N = np.cross(B - A, C - A)
+    N = N / np.maximum(np.linalg.norm(N, axis=1), 1e-300)[:, None]
+    out = Frames()
+    for q in points:
+        p = np.array(q.origin if isinstance(q, Frame) else q, dtype=float)
+        if ray is None:
+            near = _closest_on_triangles(p[None, :], A, B, C)
+            k = int(np.argmin(((near - p) ** 2).sum(1)))
+            out.append(Frame(near[k], N[k]))
+            continue
+        e1, e2 = B - A, C - A
+        h = np.cross(ray[None, :], e2)
+        det = (e1 * h).sum(1)
+        ok = np.abs(det) > 1e-12
+        inv = 1 / np.where(ok, det, 1)
+        s = p[None, :] - A
+        u = (s * h).sum(1) * inv
+        qv = np.cross(s, e1)
+        v = (qv @ ray) * inv
+        t = (e2 * qv).sum(1) * inv
+        hit = ok & (u >= -1e-9) & (v >= -1e-9) & (u + v <= 1 + 1e-9) & (t >= -1e-9)
+        if not hit.any():
+            continue
+        k = int(np.argmin(np.where(hit, t, np.inf)))
+        normal = N[k]
+        out.append(Frame(p + ray * t[k], normal))
+    return out
+
+
+def tufts(name, sites, height, width, blades=5, lean=20, direction=None, shape="blade", seed=0):
+    """One mesh of pointed pieces rooted at frames."""
+    _need_numpy("tufts")
+    sites = [sites] if isinstance(sites, Frame) else list(sites)
+    points = np.asarray([tuple(f.origin) for f in sites], dtype=float).reshape(-1, 3)
+    normals = np.asarray([tuple(f.z) for f in sites], dtype=float).reshape(-1, 3)
+
+    def field_(value, vector=False):
+        count = len(points)
+        want = (count, 3) if vector else (count,)
+        if callable(value):
+            try:
+                out = np.asarray(value(*points.T, normals.T), dtype=float)
+                if out.shape != want:
+                    raise ValueError
+            except Exception:
+                out = np.asarray([value(*p, tuple(n)) for p, n in zip(points, normals)], dtype=float).reshape(want)
+            return out
+        return np.broadcast_to(np.asarray(value, dtype=float), want)
+    if not len(points):
+        return Node(name, [])
+    h, w, tilt = field_(height), field_(width), field_(lean)
+    z = normals if direction is None else field_(direction, vector=True)
+    z = z / np.linalg.norm(z, axis=1)[:, None]
+    ref = np.zeros_like(z)
+    ref[:, 2] = 1
+    ref[np.abs(z[:, 2]) > .9] = (1, 0, 0)
+    x = np.cross(ref, z)
+    x /= np.linalg.norm(x, axis=1)[:, None]
+    y = np.cross(z, x)
+    rng = np.random.default_rng(seed)
+    count = len(sites) * blades
+    a = rng.uniform(0, 2 * np.pi, count)
+    t = np.deg2rad(np.repeat(tilt, blades)) * rng.random(count)
+    side = np.repeat(x, blades, axis=0) * np.cos(a)[:, None] + np.repeat(y, blades, axis=0) * np.sin(a)[:, None]
+    axis = np.repeat(z, blades, axis=0) * np.cos(t)[:, None] + side * np.sin(t)[:, None]
+    across = np.cross(axis, side)
+    across /= np.linalg.norm(across, axis=1)[:, None]
+    root = np.repeat(points, blades, axis=0)
+    tip = root + axis * np.repeat(h, blades)[:, None]
+    middle = (root + tip) / 2
+    radius = np.repeat(w, blades)[:, None] / 2
+    if shape == "blade":
+        vertices = np.stack((root, middle - across * radius, middle + across * radius, tip), axis=1)
+        template = np.array([(0, 2, 1), (1, 2, 3)])
+    else:
+        other = np.cross(axis, across)
+        ring_ = [middle + radius * (across * np.cos(q) + other * np.sin(q)) for q in (0, 2 * np.pi / 3, 4 * np.pi / 3)]
+        vertices = np.stack((root, *ring_, tip), axis=1)
+        template = np.array([(0, 2, 1), (0, 3, 2), (0, 1, 3), (4, 1, 2), (4, 2, 3), (4, 3, 1)])
+    faces = (template[None, :, :] + np.arange(count)[:, None, None] * vertices.shape[1]).reshape(-1, 3)
+    return Node(name, [Piece(_mesh_geom(vertices.reshape(-1, 3), faces, flat=True, thin=True))])
+
+
+# ---- displace
+
+def _refined(V, F, tags, target, budget):
+    """Triangles split until no edge is longer than target, or the budget is spent."""
+    V = [tuple(v) for v in V]
+    F = [tuple(f) for f in F]
+    tags = list(tags) if len(tags) == len(F) else [""] * len(F)
+    for _ in range(8):
+        if len(F) * 2 > budget:
+            break
+        mids, long_ = {}, target * target
+
+        def mid(i, j):
+            key = (i, j) if i < j else (j, i)
+            if key not in mids:
+                a, b = V[i], V[j]
+                if (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2 <= long_:
+                    mids[key] = -1
+                else:
+                    mids[key] = len(V)
+                    V.append(((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2))
+            return mids[key]
+        out, out_tags, split = [], [], False
+        for (a, b, c), tag in zip(F, tags):
+            ab, bc, ca = mid(a, b), mid(b, c), mid(c, a)
+            marks = (ab >= 0) + (bc >= 0) + (ca >= 0)
+            if marks == 0:
+                new = [(a, b, c)]
+            elif marks == 3:
+                new = [(a, ab, ca), (ab, b, bc), (ca, bc, c), (ab, bc, ca)]
+            elif marks == 1:
+                new = ([(a, ab, c), (ab, b, c)] if ab >= 0 else
+                       [(a, b, bc), (a, bc, c)] if bc >= 0 else [(a, b, ca), (ca, b, c)])
+            else:
+                if ab < 0:
+                    new = [(a, b, bc), (a, bc, ca), (ca, bc, c)]
+                elif bc < 0:
+                    new = [(a, ab, ca), (ab, b, c), (ab, c, ca)]
+                else:
+                    new = [(a, ab, c), (ab, bc, c), (ab, b, bc)]
+            split = split or marks > 0
+            out += new
+            out_tags += [tag] * len(new)
+        F, tags = out, out_tags
+        if not split:
+            break
+    return np.array(V, dtype=float), np.array(F, dtype=int), tags
+
+
+def _pick_faces(V, F, tags, faces):
+    """The triangles `faces` names: top, bottom, side, a direction, or a list of them."""
+    _, normal, _ = _face_data(V, F)
+    names = faces if isinstance(faces, (list, tuple)) else [faces]
+    picked = np.zeros(len(F), dtype=bool)
+    for name in names:
+        word = str(name).split(".")[-1].strip().lower()
+        if word in ("top", "bottom", "side", "start", "end") and len(tags) == len(F) and word in tags:
+            picked |= np.array([t == word for t in tags])
+        elif word == "top":
+            picked |= normal[:, 2] > 0.5
+        elif word == "bottom":
+            picked |= normal[:, 2] < -0.5
+        elif word == "side":
+            picked |= np.abs(normal[:, 2]) <= 0.5
+        else:
+            try:
+                d = np.array(_axis(word, "displace"))
+                along_ = normal @ d
+                far = (V[F].mean(axis=1) @ d)
+                picked |= (along_ > 0.5) & (far > far.max() - 0.25 * max(float(np.ptp(V @ d)), 1e-9))
+            except Exception:
+                picked |= True
+    return picked
+
+
+def displace(ob, amount, size, noise="perlin", octaves=1, seed=0, direction="normal", fade=None, *,
+             faces=None, coords="local", step=None):
+    """Push the surface out and in by up to amount, features size across."""
+    _need_numpy("displace")
+    parts = _parts("displace", [ob])
+    custom = callable(noise)
+    if coords == "path":
+        _note("displace: path coordinates read as local ones")
+    kind = noise
+    for part in parts:
+        _bake(part)
+        for piece in part.pieces:
+            g = piece.geom
+            V, F, tags = g["v"], g["f"], g["tags"]
+            if not len(F):
+                continue
+            box_ = float(np.ptp(V, axis=0).max())
+            target = step if step else max(size / 4, box_ / 128)
+            if step is None and _STATE["facets"] is not None:
+                target = max(target, math.pi * box_ / _STATE["facets"])
+            if step != 0:
+                _, _, areas = _face_data(V, F)
+                floor_ = math.sqrt(float(areas.sum()) / (0.43 * FACE_BUDGET))
+                if floor_ > target:
+                    _note("displace: refined more coarsely than asked, to stay light")
+                    target = floor_
+                V, F, tags = _refined(V, F, tags, target, FACE_BUDGET * 2)
+            picked = _pick_faces(V, F, tags, faces) if faces is not None else None
+            weight = np.ones(len(V))
+            if picked is not None:
+                inside_, outside = np.zeros(len(V), dtype=bool), np.zeros(len(V), dtype=bool)
+                inside_[F[picked].reshape(-1)] = True
+                outside[F[~picked].reshape(-1)] = True
+                border = V[inside_ & outside]
+                weight = inside_.astype(float)
+                if len(border):
+                    moving = np.where(inside_)[0]
+                    sample = border[:: max(1, len(border) // 400)]
+                    for start in range(0, len(moving), 2000):
+                        idx = moving[start:start + 2000]
+                        d = np.sqrt(((V[idx][:, None, :] - sample[None, :, :]) ** 2).sum(-1)).min(1)
+                        t = np.clip(d / size, 0, 1)
+                        weight[idx] = t * t * (3 - 2 * t)
+            if fade is not None:
+                z0, z1 = fade
+                weight = weight * np.clip((V[:, 2] - z1) / (z0 - z1), 0.0, 1.0)
+            centre, normal, areas = _face_data(V, F)
+            if custom:
+                values = np.asarray(noise(V[:, 0], V[:, 1], V[:, 2]), dtype=float)
+                values = np.broadcast_to(values, (len(V),)).copy()
+                values = np.clip(values, -1, 1)
+            else:
+                values, total = np.zeros(len(V)), 0.0
+                Q = V / size
+                for k in range(int(octaves)):
+                    f, w = 2.0 ** k, 0.5 ** k
+                    values += w * globals()["noise"](Q[:, 0] * f + 31.7 * seed, Q[:, 1] * f - 17.3 * seed,
+                                                     Q[:, 2] * f + 5.1 * seed, seed=int(seed), kind=kind)
+                    total += w
+                values /= total
+                share = np.zeros(len(V))
+                np.add.at(share, F.reshape(-1), np.repeat(areas / 3, 3))
+                mass = float((share * weight).sum())
+                mean = float((share * weight * values).sum()) / mass if mass else 0.0
+                values = (values - mean) / (1 + abs(mean))
+            if direction == "normal":
+                push = np.zeros_like(V)
+                np.add.at(push, F.reshape(-1), np.repeat(normal * areas[:, None], 3, axis=0))
+                push /= np.maximum(np.linalg.norm(push, axis=1), 1e-300)[:, None]
+            elif direction == "radial":
+                push = V / np.maximum(np.linalg.norm(V, axis=1), 1e-300)[:, None]
+            else:
+                d = np.array(_axis(direction, "displace") if isinstance(direction, str) else Vec(direction).normalized())
+                push = np.broadcast_to(d, V.shape)
+            V = V + push * (amount * weight * values)[:, None]
+            piece.geom = _mesh_geom(V, F, tags, flat=g.get("flat"), thin=g.get("thin", False))
+    return ob
+
+
+def split(ob, frame, keep="above"):
+    """What lies on one side of a frame's plane: the other side is cut away."""
+    part, = _solids("split", ob)
+    lo, hi = _box(_points(part, part.basis))
+    reach = (hi - lo).length * 2 + 1.0
+    tool = extrude("split", rect(reach * 2, reach * 2), reach)
+    if keep == "above":
+        tool.basis = mtrans(0, 0, -reach)
+    elif keep != "below":
+        raise NotPorted("split(keep=) other than above or below is not ported yet")
+    _cut_with(part, tool, frame)
+    return ob
+
+
+def _face_colours(node_look, V, F):
+    """sRGB per face from a colour function, or None if it cannot be read."""
+    fn = node_look["function"]
+    centre, normal, _ = _face_data(V, F)
+    count = fn.__code__.co_argcount - (1 if hasattr(fn, "__self__") else 0)
+    args = [centre[:, 0], centre[:, 1], centre[:, 2]]
+    if count >= 4:
+        args.append(normal.T)
+    if count >= 5:
+        span = float(np.ptp(V[:, 2])) or 1.0
+        args.append((centre[:, 2] - V[:, 2].min()) / span)
+        _note("material: a colour function's construction coordinate read as height")
+    try:
+        out = np.asarray(fn(*args), dtype=float)
+        if out.shape != (len(F), 3):
+            raise ValueError("shape")
+    except Exception:
+        rows = []
+        for k in range(len(F)):
+            one = [float(a[k]) for a in args[:3]] + ([tuple(normal[k])] if count >= 4 else []) + ([float(args[4][k])] if count >= 5 else [])
+            c = fn(*one)
+            if isinstance(c, str):
+                c = [int(c[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            rows.append([float(v) for v in c][:3])
+        out = np.array(rows)
+    return np.clip(out, 0, 1)
+
+
 # ---------------------------------------------------------------- handing the scene to three.js
 
 def scene(root):
@@ -1798,12 +2700,34 @@ def scene(root):
     for top in tops:
         number(top)
 
-    def geom(g):
+    def geom(g, colours=None):
+        if g["t"] == "mesh":
+            V, F = g["v"], g["f"]
+            return {"t": "mesh", "v": [round(float(c), 3) for c in V.reshape(-1)], "f": [int(i) for i in F.reshape(-1)],
+                    "c": None if colours is None else [round(float(c), 3) for c in colours.reshape(-1)],
+                    "flat": bool(g.get("flat")), "thin": bool(g.get("thin"))}
         if g["t"] == "extrude":
             return {"t": "extrude", "loops": [[[round(x, 5), round(y, 5)] for x, y in loop] for loop in g["loops"]],
-                    "lo": g["lo"], "hi": g["hi"], "taper": g["taper"], "twist": g["twist"]}
-        return {"t": "rings", "loop": g["loop"], "caps": g["caps"],
+                    "lo": g["lo"], "hi": g["hi"], "taper": g["taper"], "twist": g["twist"], "flat": bool(g.get("flat"))}
+        return {"t": "rings", "loop": g["loop"], "caps": g["caps"], "flat": bool(g.get("flat")),
                 "rings": [[[round(c, 5) for c in p] for p in ring] for ring in g["rings"]]}
+
+    def pieces_of(node, look):
+        out = []
+        painted = look is not None and look.get("function") is not None and np is not None
+        if painted:
+            _bake(node)
+        for p in node.pieces:
+            colours = None
+            if painted and len(p.geom["f"]):
+                try:
+                    colours = _face_colours(look, p.geom["v"], p.geom["f"])
+                except Exception as error:
+                    _note(f"material: a colour function failed ({type(error).__name__}), preset colour shown")
+            out.append({"g": geom(p.geom, colours), "m": list(p.m),
+                        "cuts": [{"g": geom(g), "m": list(m)} for g, m in p.cuts],
+                        "keeps": [{"g": geom(g), "m": list(m)} for g, m in p.keeps]})
+        return out
     nodes = []
     for node in order:
         look, up = node.look, node
@@ -1811,11 +2735,10 @@ def scene(root):
             up = up.parent
             look = up.look
         entry = {"name": node.name, "parent": ids[id(node.parent)] if node.parent is not None else -1,
-                 "m": list(node.basis), "look": look, "joints": [], "jparent": -1}
+                 "m": [float(c) for c in node.basis], "joints": [], "jparent": -1,
+                 "look": None if look is None else {k: v for k, v in look.items() if k != "function"}}
         if node.pieces is not None:
-            entry["pieces"] = [{"g": geom(p.geom), "m": list(p.m),
-                                "cuts": [{"g": geom(g), "m": list(m)} for g, m in p.cuts],
-                                "keeps": [{"g": geom(g), "m": list(m)} for g, m in p.keeps]} for p in node.pieces]
+            entry["pieces"] = pieces_of(node, look)
         if node.joints and id(node.jparent) in ids:
             entry["jparent"] = ids[id(node.jparent)]
             for j in node.joints:
@@ -1839,4 +2762,4 @@ def run(source, entry):
                       "__sand3d_program__" and not k.startswith("_")), None)
     if entry is None:
         raise ValueError("the program defines no function to call")
-    return json.dumps(scene(space[entry]()))
+    return json.dumps(scene(space[entry]()), default=float)

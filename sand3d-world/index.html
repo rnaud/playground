@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A world from code · Playground</title>
+<style>
+  :root { color-scheme:dark; --ink:#f3f1ea; --dim:#c9cbd2; --panel:rgba(20,21,28,.78); --accent:#f0c674; }
+  html, body { height:100%; margin:0; overflow:hidden; background:#a9cdea; font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); }
+  canvas { display:block; position:fixed; inset:0; }
+  .hud { position:fixed; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.7); }
+  #top { left:16px; top:14px; right:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  #building { font-variant-numeric:tabular-nums; }
+  progress { width:180px; height:6px; accent-color:var(--accent); }
+  #cross { left:50%; top:50%; width:6px; height:6px; margin:-3px; border-radius:50%; background:rgba(255,255,255,.85); box-shadow:0 0 0 1px rgba(0,0,0,.45); }
+  #label { left:50%; top:calc(50% + 22px); transform:translateX(-50%); text-align:center; max-width:80vw; }
+  #name { font-weight:650; font-size:15px; margin:0; }
+  #about { margin:0; color:var(--dim); font-size:12.5px; }
+  #help { left:16px; bottom:14px; color:var(--dim); font-size:12.5px; }
+  #help kbd { font:inherit; color:var(--ink); border:1px solid rgba(255,255,255,.4); border-radius:4px; padding:0 4px; }
+  #corner { right:16px; bottom:12px; pointer-events:auto; }
+  button { font:inherit; color:var(--ink); background:var(--panel); border:1px solid rgba(255,255,255,.28); border-radius:8px; padding:6px 12px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  #start { position:fixed; inset:0; display:grid; place-items:center; background:rgba(15,17,24,.5); }
+  #start[hidden] { display:none; }
+  #card { background:var(--panel); border:1px solid rgba(255,255,255,.2); border-radius:14px; padding:22px 26px; max-width:440px; backdrop-filter:blur(6px); }
+  #card h1 { margin:0 0 8px; font-size:20px; }
+  #card p { margin:0 0 12px; color:var(--dim); }
+  #enter { background:var(--accent); color:#1b1c22; border:0; font-weight:650; padding:9px 18px; }
+  dialog { background:#1d1f29; color:var(--ink); border:1px solid #343640; border-radius:12px; max-width:min(760px, 92vw); max-height:80vh; padding:18px 20px; }
+  dialog::backdrop { background:rgba(0,0,0,.5); }
+  dialog h2 { margin:0 0 6px; font-size:17px; }
+  dialog p { color:var(--dim); margin:0 0 10px; }
+  #creditlist { margin:0; padding-left:18px; font-size:12px; color:var(--dim); overflow:auto; max-height:52vh; }
+  a { color:var(--accent); }
+</style>
+<script type="importmap">{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/",
+  "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.1/build/index.module.js",
+  "three-bvh-csg": "https://cdn.jsdelivr.net/npm/three-bvh-csg@0.0.17/build/index.module.js"
+} }</script>
+</head>
+<body>
+<div class="hud" id="top"><span id="building" role="status">Starting…</span><progress id="progress" value="0" aria-label="Objects built"></progress></div>
+<div class="hud" id="cross" aria-hidden="true"></div>
+<div class="hud" id="label"><p id="name"></p><p id="about"></p></div>
+<div class="hud" id="help"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> walk · <kbd>Shift</kbd> run · mouse look (or drag) · <kbd>E</kbd> open · <kbd>C</kbd> credits · <kbd>Esc</kbd> release mouse</div>
+<div class="hud" id="corner"><button id="showcredits">Credits</button></div>
+<div id="start">
+  <div id="card">
+    <h1>A world from code</h1>
+    <p>A house, its furniture and the land around it. Every object is a Sand3D program, run as Python in your browser and meshed live: nothing here was stored as a 3D model.</p>
+    <p>The first visit builds for about a minute while you walk; after that it loads from your browser's cache.</p>
+    <button id="enter">Walk in</button>
+  </div>
+</div>
+<dialog id="credits">
+  <h2>Credits</h2>
+  <p>Objects are programs from the <a href="https://sandflow.ai/sand3d/">Sand3D</a> datasets by Sandflow on Hugging Face, CC BY 4.0, rebuilt here by a browser port of the <a href="https://github.com/Sandflow-ai/sand3d">sand3d</a> library (Apache-2.0). The house shell, terrain and pond are made for this page.</p>
+  <ul id="creditlist"></ul>
+  <form method="dialog" style="margin-top:12px"><button>Close</button></form>
+</dialog>
+<script type="module" src="world.js"></script>
+</body>
+</html>

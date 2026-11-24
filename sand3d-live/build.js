@@ -140,8 +140,27 @@ function fromTriangles(points) {
   return geometry;
 }
 
+// A mesh made in Python: triangles as they are, one colour a face when a colour function gave them.
+function mesh(g) {
+  const position = new Float32Array(g.f.length * 3), color = g.c ? new Float32Array(g.f.length * 3) : null;
+  const tint = new THREE.Color();
+  for (let i = 0; i < g.f.length; i++) {
+    const v = g.f[i] * 3;
+    position[i * 3] = g.v[v]; position[i * 3 + 1] = g.v[v + 1]; position[i * 3 + 2] = g.v[v + 2];
+    if (color) {
+      const f = Math.floor(i / 3) * 3;
+      tint.setRGB(g.c[f], g.c[f + 1], g.c[f + 2], THREE.SRGBColorSpace);
+      color[i * 3] = tint.r; color[i * 3 + 1] = tint.g; color[i * 3 + 2] = tint.b;
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(position, 3));
+  if (color) geometry.setAttribute('color', new THREE.BufferAttribute(color, 3));
+  return geometry;
+}
+
 function solid(g, m) {
-  const geometry = g.t === 'extrude' ? extrude(g) : rings(g);
+  const geometry = g.t === 'mesh' ? mesh(g) : g.t === 'extrude' ? extrude(g) : rings(g);
   const matrix = mat4(m);
   geometry.applyMatrix4(matrix);
   if (matrix.determinant() < 0) {             // a mirror turns the faces inside out: turn them back
@@ -151,21 +170,23 @@ function solid(g, m) {
   return geometry;
 }
 
-function shaded(geometry) {
+function shaded(geometry, flat) {
   geometry.deleteAttribute('normal');
   geometry.deleteAttribute('uv');
-  const out = toCreasedNormals(geometry.index ? geometry.toNonIndexed() : geometry, CREASE);
-  return out;
+  const plain = geometry.index ? geometry.toNonIndexed() : geometry;
+  if (flat) { plain.computeVertexNormals(); return plain; }     // unindexed: one normal a face
+  return toCreasedNormals(plain, CREASE);
 }
 
 function piece(p, stats) {
   let geometry = solid(p.g, p.m);
   const tools = [...p.cuts.map((t) => [t, 'SUBTRACTION']), ...p.keeps.map((t) => [t, 'INTERSECTION'])];
   if (tools.length && geometry.attributes.position.count) {
-    if (!csg) { stats.uncut += tools.length; return shaded(geometry); }
+    if (!csg) { stats.uncut += tools.length; return shaded(geometry, p.g.flat); }
+    const painted = Boolean(geometry.attributes.color);
     try {
       const evaluator = new csg.Evaluator();
-      evaluator.attributes = ['position', 'normal'];
+      evaluator.attributes = painted ? ['position', 'normal', 'color'] : ['position', 'normal'];
       evaluator.useGroups = false;
       geometry.computeVertexNormals();
       let brush = new csg.Brush(geometry);
@@ -173,6 +194,7 @@ function piece(p, stats) {
         const g = solid(tool.g, tool.m);
         if (!g.attributes.position.count) continue;
         g.computeVertexNormals();
+        if (painted) g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 3).fill(0.2), 3));
         brush = evaluator.evaluate(brush, new csg.Brush(g), csg[op]);
         stats.cuts += 1;
       }
@@ -182,20 +204,20 @@ function piece(p, stats) {
       console.warn('a cut failed, piece left whole', error);
     }
   }
-  return shaded(geometry);
+  return shaded(geometry, p.g.flat);
 }
 
 const looks = new Map();
-function material(look) {
-  const key = JSON.stringify(look || null);
+function material(look, painted, thin) {
+  const key = JSON.stringify(look || null) + (painted ? 'P' : '') + (thin ? 'T' : '');
   if (looks.has(key)) return looks.get(key);
   const l = look || { color: '#8d8d8d', roughness: 0.6 };
   const glassy = (l.transmission || 0) > 0.5;
   const opacity = glassy ? Math.min(l.opacity ?? 1, 0.32) : (l.opacity ?? 1);
   const m = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color(l.color || '#8d8d8d'), roughness: l.roughness ?? 0.5, metalness: l.metallic ?? 0,
+    color: new THREE.Color(painted ? '#ffffff' : (l.color || '#8d8d8d')), vertexColors: Boolean(painted), roughness: l.roughness ?? 0.5, metalness: l.metallic ?? 0,
     clearcoat: l.coat ?? 0, sheen: l.sheen ?? 0, transparent: opacity < 1, opacity, depthWrite: opacity >= 1,
-    side: opacity < 1 ? THREE.DoubleSide : THREE.FrontSide,
+    side: opacity < 1 || thin ? THREE.DoubleSide : THREE.FrontSide,
   });
   if (l.emission) { m.emissive = new THREE.Color(l.color || '#fff1dc'); m.emissiveIntensity = Math.min(l.emission / 6, 2); }
   looks.set(key, m);
@@ -213,7 +235,7 @@ export function build(scene) {
     for (const p of node.pieces || []) {
       const geometry = piece(p, stats);
       if (!geometry.attributes.position.count) continue;
-      const mesh = new THREE.Mesh(geometry, material(node.look));
+      const mesh = new THREE.Mesh(geometry, material(node.look, Boolean(geometry.attributes.color), p.g.thin));
       mesh.castShadow = mesh.receiveShadow = true;
       o.add(mesh);
       stats.parts += 1;

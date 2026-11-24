@@ -19,18 +19,32 @@ runtime, instead of shipping the meshes?
 
 Profiles (`rect`, `circle`, `ellipse`, `slot`, `polygon`, `poly` with arcs, fillets and
 chamfers, `spline`, `superellipse`, `station`, `stroke`), solids (`extrude`, `revolve`,
-`sweep`, `wire`, `loft`, `box`, `cylinder`, `tube`, `cone`, `sphere`, `wedge`, `torus`,
-`dome`, `helix`, `spiral`), placement (`at`, `transform`, `local`, `bbox`, `face` by
-direction, `grid`, `ring`, `along`, `Frame`), booleans (`cut`, `hole`, `pocket`,
-`intersect`, `seat`), `copy`, `scale`, `material`, `joint`, `pose`, `group`, `assembly`.
+`sweep`, `wire`, `loft`, `hull`, `box`, `cylinder`, `tube`, `cone`, `sphere`, `wedge`,
+`torus`, `dome`, `helix`, `spiral`), placement (`at` with `scale` and `anchor`,
+`transform`, `local`, `bbox`, `face` by direction or end cap, `grid`, `ring`, `along`,
+`phyllotaxis`, `branches`, `scatter`, `snap`, `vary`, `Frames.jitter`, `Frame`), booleans
+(`cut`, `hole`, `pocket`, `intersect`, `seat`, `split`), surface verbs (`displace`,
+`noise`, `waves`, `tufts`, colour functions as one colour a face), `copy`, `scale`,
+`material`, `joint`, `pose`, `group`, `assembly`, `facets`.
+
+The mesh-level verbs need numpy, which Pyodide loads on request. `noise`, `vary`,
+`jitter`, `scatter`, `phyllotaxis` and `tufts` follow the original's arithmetic, so the
+same seeds give the same layouts; `displace` refines to a triangle budget rather than to
+the original's density, and `branches` samples its curves more coarsely.
 
 Approximated, and said so in the viewer: `join` and `merge` overlay their pieces without
-fusing them; `fillet`, `chamfer`, `soften`, `shell`, `displace`, `bend`, `twist`, `taper`,
-`dent` and `lay` leave the solid as built; `gear`, `knurl` and `thread` are plain cylinders.
+fusing them; `fillet`, `chamfer`, `soften`, `shell`, `bend`, `twist`, `taper`, `dent` and
+`lay` leave the solid as built; `gear`, `knurl` and `thread` are plain cylinders; `snap`
+and `scatter` read a part's surface before its cuts.
 
-Not ported (the program fails with `NotPorted`): `hull`, `field`, `fill`, `body`, `noise`,
-`waves`, `scatter`, `snap`, `vary`, `tufts`, `branches`, `phyllotaxis`, `split`, `wrap`,
-`text`, `ob.edge`, `extrude(until=)`. Most of the Nature dataset needs these.
+Not ported (the program fails with `NotPorted`): `field`, `fill`, `body`, `wrap`, `text`,
+`ob.edge`, `extrude(until=)`.
+
+Reach, on random samples run natively: 664 of 756 Nature programs, 824 of 840 objaverse
+programs, 148 of 156 SimReady programs, 120 of 120 articraft programs. Only the articraft
+set was checked against the published meshes; the others were checked by eye on
+`sheet.html`, a contact sheet that builds each program beside the dataset's render
+(`sheet.html?data=<json of {title, program, entry, img}>&from=0&n=30`).
 
 Known gap: `bbox` and `face` read a part's box before its cuts, so a frame read on a part
 after a cut that shortens it lands on the uncut box.
