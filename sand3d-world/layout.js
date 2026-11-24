@@ -16,6 +16,7 @@ export const PLACE = [
   { id: 'cabinet', x: -1.9, z: 0.62, rot: 0 },
   { id: 'monstera', x: -6.4, z: -0.95 },
   { id: 'ceiling_fan', x: -3.5, z: -2.0 },
+  { id: 'beanbag', x: -5.7, z: -3.0, rot: 40 },
   // kitchen
   { id: 'kitchenette', x: 3.3, z: -4.5, rot: 90 },
   { id: 'microwave', on: 'kitchenette', dx: -0.55, rot: 0 },
@@ -38,6 +39,9 @@ export const PLACE = [
   { id: 'teacup', on: 'dining_table', dx: 0.38, dz: 0.22 },
   { id: 'calathea', on: 'dining_table', dx: -0.1, dz: 0.28 },
   { id: 'peace_lily', x: 6.5, z: 0.45 },
+  { id: 'bar_stool', name: 'stool_a', x: 2.75, z: -3.75 },
+  { id: 'bar_stool', name: 'stool_b', x: 3.85, z: -3.75 },
+  { id: 'hutch', x: 1.7, z: 0.6, rot: 180 },
   // bedroom
   { id: 'bed', x: -5.55, z: 4.05, rot: 0 },
   { id: 'nightstand', x: -6.6, z: 2.45, rot: 90 },
@@ -45,17 +49,20 @@ export const PLACE = [
   { id: 'wardrobe', x: -1.6, z: 3.55, rot: -90 },
   { id: 'drawers', x: -2.5, z: 1.5, rot: 0 },
   { id: 'rubber_plant', x: -6.6, z: 1.45 },
+  { id: 'rocker', x: -2.4, z: 4.2, rot: -135 },
   // bathroom
   { id: 'bathtub', x: 0.75, z: 4.45, rot: 90 },
   { id: 'toilet', x: -0.55, z: 2.3, rot: 90 },
   { id: 'vanity', x: 0.6, z: 1.5, rot: 0 },
   { id: 'washer', x: 1.95, z: 1.55, rot: 0 },
   { id: 'shower', x: 2.15, z: 4.55, rot: 180 },
+  { id: 'bath_mat', x: 0.75, z: 3.55 },
   // hall and study
   { id: 'desk', x: 6.45, z: 3.1, rot: 0 },
   { id: 'desk_lamp', on: 'desk', dz: -0.6 },
   { id: 'office_chair', x: 5.5, z: 3.1, rot: 90 },
-  { id: 'chest', x: 3.05, z: 4.5, rot: 0 },
+  { id: 'chest', x: 6.5, z: 4.55, rot: 90 },
+  { id: 'secretary', x: 3.05, z: 4.55, rot: 180 },
   { id: 'pendant', x: 4.75, z: 3.0 },
   // yard
   { id: 'mailbox', x: 6.4, z: 9.2, rot: 180 },
@@ -108,8 +115,6 @@ export const SCATTER = [
   { id: 'mossy_log', n: 6, zone: 'forest', seed: 26, min: 18, gap: 2.5 },
   { id: 'stump', n: 7, zone: 'meadow', seed: 27, min: 14, trunk: 0.4, gap: 1.5 },
   { id: 'mossy_stump', n: 7, zone: 'forest', seed: 28, min: 18, trunk: 0.4, gap: 1.5 },
-  { id: 'hay', n: 5, zone: 'meadow', seed: 29, min: 30, trunk: 0.7, gap: 3 },
-  { id: 'wall', n: 7, zone: 'garden', seed: 30, min: 14, trunk: 0.6, gap: 2 },
   { id: 'arborvitae', n: 2, zone: 'garden', seed: 31, min: 9, trunk: 0.5, gap: 2.6 },
   { id: 'weigela', n: 2, zone: 'garden', seed: 32, min: 8, gap: 2.2 },
   { id: 'daisy', n: 14, zone: 'garden', seed: 41, gap: 0.5, near: 1.6, shadow: false },
@@ -122,8 +127,4 @@ export const SCATTER = [
   { id: 'canna', n: 9, zone: 'shore', seed: 36, gap: 1.2 },
   { id: 'cattail', n: 22, zone: 'shore', seed: 37, gap: 0.9, reach: 10.5, min: 7 },
   { id: 'water_lily', n: 12, zone: 'pond', seed: 38, gap: 1.0, reach: 5, shadow: false },
-  { id: 'grass', n: 46, zone: 'meadow', seed: 39, gap: 0.8, reach: 50, near: 1.6, shadow: false },
-  { id: 'tussock', n: 34, zone: 'meadow', seed: 40, gap: 0.7, reach: 50, near: 1.5, shadow: false },
-  { id: 'mushroom', n: 22, zone: 'forest', seed: 45, gap: 0.5, reach: 60, min: 18, shadow: false },
-  { id: 'parasol', n: 18, zone: 'forest', seed: 46, gap: 0.5, reach: 60, min: 18, shadow: false },
 ];

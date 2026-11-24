@@ -46,10 +46,27 @@ function miters(loop, sign) {
 }
 const norm2 = (x, y) => { const l = Math.hypot(x, y); return l < 1e-12 ? [0, 0] : [x / l, y / l]; };
 
-function extrude(g) {
+// The corners of a plain outline eased by a small radius, as real furniture edges are.
+function eased(loop, r) {
+  if (loop.length > 12) return loop;
+  const n = loop.length, out = [];
+  for (let i = 0; i < n; i++) {
+    const a = loop[(i + n - 1) % n], p = loop[i], c = loop[(i + 1) % n];
+    const u0 = [a[0] - p[0], a[1] - p[1]], u1 = [c[0] - p[0], c[1] - p[1]], l0 = Math.hypot(...u0), l1 = Math.hypot(...u1);
+    const cos = (u0[0] * u1[0] + u0[1] * u1[1]) / Math.max(l0 * l1, 1e-12);
+    const back = Math.min(r, l0 * 0.3, l1 * 0.3);
+    if (cos < -0.9 || cos > 0.95 || back < 1e-9) { out.push(p); continue; }
+    const s = [p[0] + u0[0] / l0 * back, p[1] + u0[1] / l0 * back], e = [p[0] + u1[0] / l1 * back, p[1] + u1[1] / l1 * back];
+    for (let k = 0; k <= 3; k++) { const t = k / 3, w = 1 - t; out.push([w * w * s[0] + 2 * w * t * p[0] + t * t * e[0], w * w * s[1] + 2 * w * t * p[1] + t * t * e[1]]); }
+  }
+  return out;
+}
+
+function extrude(g, soften = 0) {
   const tris = [];
-  const outers = g.loops.filter((l) => l.length > 2 && area(l) > 0);
-  const holes = g.loops.filter((l) => l.length > 2 && area(l) < 0);
+  const drawn = soften > 0 && !g.twist ? g.loops.map((l) => eased(l, soften)) : g.loops;
+  const outers = drawn.filter((l) => l.length > 2 && area(l) > 0);
+  const holes = drawn.filter((l) => l.length > 2 && area(l) < 0);
   const span = g.hi - g.lo, tan = Math.tan(THREE.MathUtils.degToRad(g.taper || 0));
   const twisted = Math.max(1, Math.ceil(Math.abs(g.twist || 0) / 3));
   for (const outer of outers) {
@@ -60,7 +77,7 @@ function extrude(g) {
     // chamfered rims a fillet asked for, then the straight (or twisted) wall between them.
     const xs = outer.map((p) => p[0]), ys = outer.map((p) => p[1]);
     const limit = Math.min(span * 0.45, 0.3 * Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)));
-    const round = g.round || {}, steps = round.flat ? 1 : 4;
+    const round = g.round || (soften > 0 && !g.twist ? { top: soften, bottom: soften } : {}), steps = round.flat ? 1 : (g.round ? 4 : 2);
     const rb = Math.max(0, Math.min(round.bottom || 0, limit)), rt = Math.max(0, Math.min(round.top || 0, limit));
     const cuts = [];
     if (rb > 0) for (let k = 0; k < steps; k++) { const a = k / steps * Math.PI / 2; cuts.push([g.lo + rb * (1 - Math.cos(a)), round.flat ? rb : rb * (1 - Math.sin(a))]); }
@@ -166,8 +183,8 @@ function mesh(g) {
   return geometry;
 }
 
-function solid(g, m) {
-  const geometry = g.t === 'mesh' ? mesh(g) : g.t === 'extrude' ? extrude(g) : rings(g);
+function solid(g, m, soften = 0) {
+  const geometry = g.t === 'mesh' ? mesh(g) : g.t === 'extrude' ? extrude(g, soften) : rings(g);
   const matrix = mat4(m);
   geometry.applyMatrix4(matrix);
   if (matrix.determinant() < 0) {             // a mirror turns the faces inside out: turn them back
@@ -186,7 +203,7 @@ function shaded(geometry, flat) {
 }
 
 function piece(p, stats) {
-  let geometry = solid(p.g, p.m);
+  let geometry = solid(p.g, p.m, stats.soften);
   const tools = [...p.cuts.map((t) => [t, 'SUBTRACTION']), ...p.keeps.map((t) => [t, 'INTERSECTION'])];
   if (tools.length && geometry.attributes.position.count) {
     if (!csg) { stats.uncut += tools.length; return shaded(geometry, p.g.flat); }
@@ -233,8 +250,9 @@ function material(look, painted, thin) {
 }
 
 // The whole object: a group in metres, Y up, and the joints that move it.
-export function build(scene) {
-  const stats = { parts: 0, triangles: 0, cuts: 0, uncut: 0 };
+// `soften` (metres) eases the edges of extruded parts: not in the programs, a finish the page may ask for.
+export function build(scene, { soften = 0 } = {}) {
+  const stats = { parts: 0, triangles: 0, cuts: 0, uncut: 0, soften: soften / scene.scale };
   const objects = scene.nodes.map((node) => {
     const o = new THREE.Group();
     o.name = node.name;

@@ -24,7 +24,9 @@ browser and meshed live. No 3D model files are shipped.
 - `layout.js` is the floor plan and the scatter rules.
 
 Lighting is a physical sky that also lights every surface, a sun with soft shadows, ambient
-occlusion and a light bloom; rooms reflect a neutral room, not the sky. `?quality=low` drops
+occlusion and a light bloom; rooms reflect a neutral room, not the sky. Each room's ceiling
+lamp casts shadows, redrawn only when something indoors changes. Household parts get their
+extruded edges eased by 3.5 mm, a finish the programs do not ask for. `?quality=low` drops
 the ambient occlusion, bloom and anti-aliasing.
 
 Made by this page, not by Sand3D: the house shell, terrain, pond, grass, sky and the surface
@@ -32,11 +34,15 @@ detail.
 
 The first visit builds for about 70 seconds on the machine it was made on (Apple M5 Pro),
 most of it one boulder; each program's result is then kept in IndexedDB, so later visits
-skip Python. The scene is about 6.3 M triangles and drew in 12 to 23 ms a frame there at
+skip Python. The scene is about 7.3 M triangles and drew in 16 to 31 ms a frame there at
 1500 x 1125; it has not been measured on anything slower.
 
 Jointed objects open with E: the cabinet, the chest of drawers, the dryer, the garden gate;
 the ceiling fan and the wind turbine spin.
 
-Not done: touch controls, shadows from the indoor lamps, doors in the interior door frames,
-and surface detail on the six jointed objects.
+Several household pieces come from the Nature set, whose furniture is shown weathered and
+overgrown: their lichen, moss and snow parts are left out by name, but their colours stay as
+written (the bed's mattress is an olive grey).
+
+Not done: touch controls, doors that open and close (the interior ones stand open), and
+curtains, rugs or pictures, which the datasets do not offer in a clean form.

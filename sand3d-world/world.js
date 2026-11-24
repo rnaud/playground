@@ -16,7 +16,7 @@ import { makeGrass } from './grass.js';
 import { detailed, lookKey, lookMaterial, plain, setIndoorLight, indoorLight } from './look.js';
 
 const $ = (id) => document.getElementById(id);
-const CACHE_VERSION = 'v8';
+const CACHE_VERSION = 'v8';      // (bump when sand3d.py changes what a program builds)
 const QUALITY = new URLSearchParams(location.search).get('quality') || 'high';      // ?quality=low drops ambient occlusion and bloom
 
 // ---------------------------------------------------------------- the place
@@ -63,6 +63,7 @@ Object.assign(sky.material.uniforms.mieCoefficient, { value: 0.004 });
 Object.assign(sky.material.uniforms.mieDirectionalG, { value: 0.82 });
 sky.material.uniforms.sunPosition.value.copy(SUN_DIR);
 scene.add(sky);
+sky.userData.backdrop = true;
 {
   const pmrem = new THREE.PMREMGenerator(renderer), only = new THREE.Scene(), copy = new Sky();
   copy.scale.setScalar(5000);
@@ -109,6 +110,10 @@ addEventListener('resize', resize);
 resize();
 
 // ---------------------------------------------------------------- terrain, pond
+const outdoors = new THREE.Group(), indoors = new THREE.Group();     // what the lamps' shadows may skip, and what they need
+scene.add(outdoors, indoors);
+const lamps = [];
+let lampsStale = 0;
 const colliders = [];            // {x0, x1, z0, z1} boxes and {x, z, r} posts the walker cannot enter
 
 function makeTerrain() {
@@ -134,7 +139,7 @@ function makeTerrain() {
   g.computeVertexNormals();
   const mesh = new THREE.Mesh(g, detailed(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 }), 'ground'));
   mesh.receiveShadow = true;
-  scene.add(mesh);
+  outdoors.add(mesh);
 
   // Water that mirrors the sky, with a slow ripple.
   const N = 128, data = new Uint8Array(N * N * 4);
@@ -156,7 +161,7 @@ function makeTerrain() {
   water.rotation.x = -Math.PI / 2;
   water.position.set(POND.x, -0.42, POND.z);
   water.receiveShadow = true;
-  scene.add(water);
+  outdoors.add(water);
 }
 let ripple = null;
 
@@ -170,6 +175,8 @@ function makeHouse() {
   const glass = new THREE.MeshPhysicalMaterial({ color: '#dfeef2', roughness: 0.02, transparent: true, opacity: 0.16, envMapIntensity: 1.8, depthWrite: false });
   const trim = plain('#f4f1ea', 'smooth', { roughness: 0.55 });
   const timber = plain('#6a4a32', 'wood', { roughness: 0.6 });
+  const doorPaint = plain('#f2efe8', 'smooth', { roughness: 0.45, envMap: indoorLight(), envMapIntensity: 0.3 });
+  const brass = new THREE.MeshStandardMaterial({ color: '#b8935a', metalness: 1, roughness: 0.3, envMap: indoorLight(), envMapIntensity: 0.6 });
   const box = (w, h, d, x, y, z, m, solid = true) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
     mesh.position.set(x, y + h / 2, z);
@@ -194,6 +201,26 @@ function makeHouse() {
       if (o.kind === 'door') {
         piece(o.a, o.b, 2.1, H);
         piece(o.a, o.a + F, 0, 2.1, timber, false, D); piece(o.b - F, o.b, 0, 2.1, timber, false, D); piece(o.a, o.b, 2.1 - F, 2.1, timber, false, D);
+        if (o.swing) {                                   // a panelled leaf, standing open
+          const w = o.b - o.a - 2 * F, leaf = new THREE.Group();
+          const slab = new THREE.Mesh(new THREE.BoxGeometry(w, 2.02, 0.04), doorPaint);
+          slab.position.set(w / 2, 1.01, 0);
+          leaf.add(slab);
+          for (const [py, ph] of [[0.55, 0.7], [1.5, 0.8]]) for (const side of [-1, 1]) {
+            const panel = new THREE.Mesh(new THREE.BoxGeometry(w - 0.24, ph, 0.012), doorPaint);
+            panel.position.set(w / 2, py, side * 0.022);
+            leaf.add(panel);
+          }
+          for (const side of [-1, 1]) {
+            const knob = new THREE.Mesh(new THREE.SphereGeometry(0.028, 16, 12), brass);
+            knob.position.set(w - 0.08, 1.0, side * 0.05);
+            leaf.add(knob);
+          }
+          leaf.traverse((q) => { if (q.isMesh) { q.castShadow = q.receiveShadow = true; } });
+          if (axis === 'x') { leaf.position.set(o.a + F, floor, at); leaf.rotation.y = THREE.MathUtils.degToRad(o.swing); }
+          else { leaf.position.set(at, floor, o.a + F); leaf.rotation.y = THREE.MathUtils.degToRad(o.swing - 90); }
+          house.add(leaf);
+        }
       } else {
         piece(o.a, o.b, 0, 0.9); piece(o.a, o.b, 2.1, H); piece(o.a + F, o.b - F, 0.9 + F, 2.1 - F, glass, true, 0.012);
         piece(o.a, o.a + F, 0.9, 2.1, trim, false, D); piece(o.b - F, o.b, 0.9, 2.1, trim, false, D);
@@ -205,15 +232,15 @@ function makeHouse() {
     }
     piece(cursor, b, 0, H);
   };
-  const D = (a, b) => ({ a, b, kind: 'door' }), W = (a, b) => ({ a, b, kind: 'window' });
+  const D = (a, b, swing = 0) => ({ a, b, kind: 'door', swing }), W = (a, b) => ({ a, b, kind: 'window' });
   wallRun('x', z0, x0, x1, [W(-5.4, -3.6), D(-1.7, -0.7), W(2.4, 4.6)], plaster);
   wallRun('x', z1, x0, x1, [W(-5, -3), W(0.2, 1.3), D(4.2, 5.3)], plaster);
   wallRun('z', x0, z0, z1, [W(-3.2, -1.2), W(2.2, 3.8)], plaster);
   wallRun('z', x1, z0, z1, [W(-3.4, -1.4), W(2.4, 3.8)], plaster);
   wallRun('z', 0, z0, 1, [D(-2.9, -1.1)], inner);
-  wallRun('x', 1, x0, x1, [D(-4.7, -3.7), D(4.3, 5.4)], inner);
+  wallRun('x', 1, x0, x1, [D(-4.7, -3.7, -100), D(4.3, 5.4, 100)], inner);
   wallRun('z', -1, 1, z1, [], inner);
-  wallRun('z', 2.5, 1, z1, [D(2.6, 3.5)], inner);
+  wallRun('z', 2.5, 1, z1, [D(2.6, 3.5, -100)], inner);
   // Floors: boards in the living rooms, tiles in the kitchen and bathroom, a skirting board round each.
   const boards = plain('#b98d5f', 'planks', { roughness: 0.42, ...indoor }), tiles = plain('#d8d3c8', 'tiles', { roughness: 0.3, ...indoor }), bath = plain('#b9cdd2', 'tiles', { roughness: 0.25, ...indoor });
   const skirting = plain('#f1ede4', 'smooth', { roughness: 0.5, ...indoor });
@@ -259,9 +286,19 @@ function makeHouse() {
   for (const [x, z, power] of [[-3.5, 0.2, 11], [3.5, -2, 12], [-4, 3, 8], [0.75, 3, 6], [5.2, 4.2, 6]]) {
     const lamp = new THREE.PointLight('#ffdcb0', power, 12, 1.9);
     lamp.position.set(x, H - 0.3, z);
+    lamp.castShadow = true;
+    lamp.shadow.mapSize.set(1024, 1024);
+    lamp.shadow.camera.near = 0.08;
+    lamp.shadow.camera.far = 11;
+    lamp.shadow.bias = -0.003;
+    lamp.shadow.normalBias = 0.02;
+    lamp.shadow.radius = 3;
+    lamp.shadow.autoUpdate = false;        // redrawn only when something indoors changes
+    lamps.push(lamp);
     house.add(lamp);
     const fitting = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.07, 24), shade);
     fitting.position.set(x, H - 0.045, z);
+    fitting.castShadow = false;
     house.add(fitting);
   }
   scene.add(house);
@@ -309,7 +346,16 @@ function template(built, item) {
   root.updateMatrixWorld(true);
   const names = item.drop || [];
   if (item.live) {                                   // keeps its parts and joints, to be opened
-    root.traverse((o) => { if (o.isMesh && names.length && dropped(o, names)) o.visible = false; });
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      if (names.length && dropped(o, names)) { o.visible = false; return; }
+      if (!o.geometry.attributes.color) {
+        const c = o.material.color, color = new Float32Array(o.geometry.attributes.position.count * 3);
+        for (let i = 0; i < color.length; i += 3) { color[i] = c.r; color[i + 1] = c.g; color[i + 2] = c.b; }
+        o.geometry.setAttribute('color', new THREE.BufferAttribute(color, 3));
+      }
+      o.material = lookMaterial(lookKey(o.material, item.indoors, 0.001));       // these parts are still in millimetres
+    });
     const fit = fitting(new THREE.Box3().setFromObject(root), item);
     const holder = new THREE.Group();
     holder.matrixAutoUpdate = false;
@@ -392,7 +438,8 @@ function putOne(entry, spot) {
       holder.add(mesh);
     }
   }
-  scene.add(holder);
+  (item.indoors ? indoors : outdoors).add(holder);
+  if (item.indoors) lampsStale = performance.now();
   picks.push(holder);
   triangleCount += tpl.triangles;
   instanceCount += 1;
@@ -448,7 +495,7 @@ function scatter(entry, rule) {
     mesh.receiveShadow = true;
     mesh.userData.item = item;
     mesh.computeBoundingSphere();
-    scene.add(mesh);
+    outdoors.add(mesh);
     picks.push(mesh);
   }
   triangleCount += tpl.triangles * spots.length;
@@ -492,7 +539,7 @@ async function buildAll() {
   const [db] = await Promise.all([openCache(), loadCsg()]);
   const land = (item, json, ms, cached) => {
     try {
-      const built = build(JSON.parse(json));
+      const built = build(JSON.parse(json), { soften: item.source === 'Sand3D Nature' ? 0 : 0.0035 });
       arrive(item, template(built, item));
       stats.python += ms;
       if (cached) stats.fromCache += 1;
@@ -639,6 +686,7 @@ function animate(dt, now) {
       j.value = (Math.abs(j.hi) >= Math.abs(j.lo) ? j.hi : j.lo) * ease;
     }
     l.pose();
+    if (l.item.indoors) redrawLampShadows([lamps.reduce((a, b) => (a.position.distanceToSquared(l.holder.position) < b.position.distanceToSquared(l.holder.position) ? a : b))]);
   }
 }
 
@@ -646,10 +694,29 @@ function animate(dt, now) {
 makeTerrain();
 makeHouse();
 const grass = makeGrass({ pond: POND, house: HOUSE });
-scene.add(grass.mesh);
+outdoors.add(grass.mesh);
 buildAll().catch((error) => { $('building').textContent = `Could not start: ${error.message || error}`; console.error(error); });
 
-const draw = () => composer.render();
+// The lamps' shadows are drawn rarely, with the outdoors hidden: five lamps look six ways each,
+// and the trees have no business in that.
+const tiny = new THREE.WebGLRenderTarget(4, 4);
+function redrawLampShadows(which = lamps) {
+  const sunAuto = sun.shadow.autoUpdate;
+  sun.shadow.autoUpdate = false;
+  outdoors.visible = false;
+  sky.visible = false;
+  for (const lamp of which) lamp.shadow.needsUpdate = true;
+  renderer.setRenderTarget(tiny);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+  outdoors.visible = true;
+  sky.visible = true;
+  sun.shadow.autoUpdate = sunAuto;
+}
+const draw = () => {
+  if (lampsStale && performance.now() - lampsStale > 400) { lampsStale = 0; redrawLampShadows(); }
+  composer.render();
+};
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);

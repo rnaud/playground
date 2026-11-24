@@ -105,9 +105,9 @@ function texture(surface) {
 
 // Adds the detail to a standard or physical material: projected along the three axes of the
 // object's own space (so it stays put on instances), blended by the facing of the surface.
-export function detailed(material, surface, strength = 1) {
+export function detailed(material, surface, strength = 1, unit = 1) {
   const [scale, tint, bump, rough] = SURFACE[surface];
-  const uniforms = { uDetail: { value: texture(surface) }, uDetailScale: { value: scale }, uDetailTint: { value: tint * strength },
+  const uniforms = { uDetail: { value: texture(surface) }, uDetailScale: { value: scale * unit }, uDetailTint: { value: tint * strength },
     uDetailBump: { value: bump * strength }, uDetailRough: { value: rough * strength } };
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -158,21 +158,21 @@ export const indoorLight = () => room;
 
 // One shared material per look: surface, roughness to a tenth, metal, coat, glass, sidedness, indoors.
 const shared = new Map();
-export function lookKey(material, indoors) {
+export function lookKey(material, indoors, unit = 1) {
   const glass = material.transparent;
   return [surfaceOf(material), Math.round(material.roughness * 10), material.metalness > 0.5 ? 'm' : 'd',
-    material.clearcoat > 0.2 ? 'c' : '', glass ? 't' : '', material.side === THREE.DoubleSide && !glass ? '2' : '', indoors ? 'i' : 'o'].join('|');
+    material.clearcoat > 0.2 ? 'c' : '', glass ? 't' : '', material.side === THREE.DoubleSide && !glass ? '2' : '', indoors ? 'i' : 'o', unit].join('|');
 }
 export function lookMaterial(key) {
   if (shared.has(key)) return shared.get(key);
-  const [surface, rough, metal, coat, glass, two, where] = key.split('|');
+  const [surface, rough, metal, coat, glass, two, where, unit] = key.split('|');
   const m = new THREE.MeshPhysicalMaterial({
     vertexColors: true, roughness: Math.max(0.05, Number(rough) / 10), metalness: metal === 'm' ? 1 : 0,
-    clearcoat: coat ? 0.6 : 0, clearcoatRoughness: 0.2, envMapIntensity: where === 'i' ? 0.3 : 1, envMap: where === 'i' ? room : null,
+    clearcoat: coat ? 0.6 : 0, clearcoatRoughness: 0.2, envMapIntensity: where === 'i' ? (metal === 'm' ? 1.3 : 0.3) : 1, envMap: where === 'i' ? room : null,
     side: two || glass ? THREE.DoubleSide : THREE.FrontSide,
   });
   if (glass) Object.assign(m, { transparent: true, opacity: 0.28, roughness: 0.03, depthWrite: false, envMapIntensity: where === 'i' ? 0.6 : 1.6 });
-  else detailed(m, surface, surface === 'leaf' && two ? 0.6 : 1);
+  else detailed(m, surface, surface === 'leaf' && two ? 0.6 : 1, Number(unit) || 1);
   shared.set(key, m);
   return m;
 }
