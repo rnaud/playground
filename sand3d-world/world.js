@@ -3,11 +3,21 @@
 // this file bakes them into light templates, lays them out, and lets you walk and open things.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Sky } from 'three/addons/objects/Sky.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { build, loadCsg } from '../sand3d-live/build.js';
 import { PLACE, SCATTER } from './layout.js';
+import { makeGrass } from './grass.js';
+import { detailed, lookKey, lookMaterial, plain, setIndoorLight, indoorLight } from './look.js';
 
 const $ = (id) => document.getElementById(id);
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v7';
+const QUALITY = new URLSearchParams(location.search).get('quality') || 'high';      // ?quality=low drops ambient occlusion and bloom
 
 // ---------------------------------------------------------------- the place
 const HOUSE = { x0: -7, x1: 7, z0: -5, z1: 5, wall: 2.8, thick: 0.16, floor: 0.12 };
@@ -32,30 +42,66 @@ function rng(seed) {
 }
 
 // ---------------------------------------------------------------- renderer, sky, light
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, QUALITY === 'low' ? 1 : 1.25));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.95;
+renderer.toneMappingExposure = 0.42;
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#d3ecff');
-scene.fog = new THREE.Fog('#d9ecf7', 70, 210);
-const camera = new THREE.PerspectiveCamera(68, 1, 0.08, 400);
+const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 1400);
 camera.rotation.order = 'YXZ';
-scene.add(new THREE.HemisphereLight('#dcecff', '#6b6a4e', 1.05));
-const sun = new THREE.DirectionalLight('#fff1d6', 2.6);
+
+// A physical sky: it is the backdrop, and its light (blurred) is what every surface reflects.
+const SUN_DIR = new THREE.Vector3(0.62, 0.5, 0.45).normalize();
+const sky = new Sky();
+sky.scale.setScalar(1200);
+Object.assign(sky.material.uniforms.turbidity, { value: 2.6 });
+Object.assign(sky.material.uniforms.rayleigh, { value: 0.9 });
+Object.assign(sky.material.uniforms.mieCoefficient, { value: 0.004 });
+Object.assign(sky.material.uniforms.mieDirectionalG, { value: 0.82 });
+sky.material.uniforms.sunPosition.value.copy(SUN_DIR);
+scene.add(sky);
+{
+  const pmrem = new THREE.PMREMGenerator(renderer), only = new THREE.Scene(), copy = new Sky();
+  copy.scale.setScalar(5000);
+  for (const k of ['turbidity', 'rayleigh', 'mieCoefficient', 'mieDirectionalG']) copy.material.uniforms[k].value = sky.material.uniforms[k].value;
+  copy.material.uniforms.sunPosition.value.copy(SUN_DIR);
+  only.add(copy);
+  scene.environment = pmrem.fromScene(only, 0.02).texture;
+  scene.environmentIntensity = 0.75;
+  setIndoorLight(pmrem.fromScene(new RoomEnvironment(), 0.04).texture);     // rooms reflect a room, not the sky
+}
+scene.fog = new THREE.FogExp2('#9fb6c6', 0.0022);
+const sun = new THREE.DirectionalLight('#fff0d8', 3.3);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -38, right: 38, top: 38, bottom: -38, near: 1, far: 160 });
-sun.shadow.bias = -0.0006;
-sun.shadow.normalBias = 0.04;
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -46, right: 46, top: 46, bottom: -46, near: 1, far: 220 });
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.035;
+sun.shadow.radius = 2.5;
 scene.add(sun, sun.target);
-const SUN_DIR = new THREE.Vector3(0.55, 0.78, 0.35).normalize();
+scene.add(new THREE.HemisphereLight('#cfe0ff', '#5d5a44', 0.12));
+
+// Ambient occlusion grounds things where they meet; bloom lets the sky, lamps and bright metal glow.
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: QUALITY === 'low' ? 0 : 4 }));
+composer.addPass(new RenderPass(scene, camera));
+let ao = null;
+if (QUALITY !== 'low') {
+  ao = new GTAOPass(scene, camera, 1, 1);
+  ao.updateGtaoMaterial({ radius: 0.55, distanceExponent: 1.3, thickness: 1.2, scale: 1.15, samples: 12 });
+  ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
+  ao.blendIntensity = 1;
+  composer.addPass(ao);
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.07, 0.35, 3.0));
+}
+composer.addPass(new OutputPass());
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+  composer.setPixelRatio(renderer.getPixelRatio());
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
 }
@@ -66,61 +112,95 @@ resize();
 const colliders = [];            // {x0, x1, z0, z1} boxes and {x, z, r} posts the walker cannot enter
 
 function makeTerrain() {
-  const size = 260, seg = 200;
+  const size = 320, seg = 256;
   const g = new THREE.PlaneGeometry(size, size, seg, seg);
   g.rotateX(-Math.PI / 2);
   const p = g.attributes.position, color = new Float32Array(p.count * 3), c = new THREE.Color();
-  const grassA = new THREE.Color('#5d8a3c'), grassB = new THREE.Color('#7fa24a'), dirt = new THREE.Color('#9b8562'), mud = new THREE.Color('#6f6a4d');
+  const grassA = new THREE.Color('#2c4a1f'), grassB = new THREE.Color('#4a6229'), dry = new THREE.Color('#5f6a32');
+  const dirt = new THREE.Color('#8a7353'), mud = new THREE.Color('#5a5238');
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i);
     p.setY(i, ground(x, z));
     const patch = 0.5 + 0.5 * Math.sin(x * 0.31 + Math.sin(z * 0.17) * 2) * Math.cos(z * 0.27);
-    c.copy(grassA).lerp(grassB, patch);
-    if (onPath(x, z)) c.lerp(dirt, 0.85);
+    const broad = 0.5 + 0.5 * Math.sin(x * 0.043 + 2.1) * Math.sin(z * 0.051 + 0.7);
+    c.copy(grassA).lerp(grassB, patch).lerp(dry, broad * 0.35);
+    const edge = Math.abs(x - 4.75 - 2.2 * Math.sin(z * 0.12));
+    if (z > 4 && z < 47) c.lerp(dirt, (1 - smooth(0.7, 1.7, edge)) * 0.92);
     const dp = Math.hypot(x - POND.x, z - POND.z);
-    if (dp < POND.r + 2) c.lerp(mud, 1 - smooth(POND.r - 1, POND.r + 2, dp));
+    if (dp < POND.r + 3) c.lerp(mud, 1 - smooth(POND.r - 1, POND.r + 3, dp));
     color.set([c.r, c.g, c.b], i * 3);
   }
   g.setAttribute('color', new THREE.BufferAttribute(color, 3));
   g.computeVertexNormals();
-  const mesh = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }));
+  const mesh = new THREE.Mesh(g, detailed(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 }), 'ground'));
   mesh.receiveShadow = true;
   scene.add(mesh);
-  const water = new THREE.Mesh(new THREE.CircleGeometry(POND.r + 1.5, 48),
-    new THREE.MeshStandardMaterial({ color: '#3f7f95', roughness: 0.08, metalness: 0.2, transparent: true, opacity: 0.82 }));
+
+  // Water that mirrors the sky, with a slow ripple.
+  const N = 128, data = new Uint8Array(N * N * 4);
+  const h = (x, y) => Math.sin(x * 0.31 + Math.sin(y * 0.23) * 1.7) * 0.5 + Math.sin(y * 0.44 + x * 0.12) * 0.35 + Math.sin((x + y) * 0.74) * 0.15;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const k = 2 * Math.PI / N * 4, dx = h((x + 1) * k, y * k) - h((x - 1) * k, y * k), dy = h(x * k, (y + 1) * k) - h(x * k, (y - 1) * k);
+    data.set([128 - dx * 300, 128 - dy * 300, 255, 255], (y * N + x) * 4);
+  }
+  ripple = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  ripple.wrapS = ripple.wrapT = THREE.RepeatWrapping;
+  ripple.repeat.set(16, 16);
+  ripple.generateMipmaps = true;
+  ripple.minFilter = THREE.LinearMipmapLinearFilter;
+  ripple.magFilter = THREE.LinearFilter;
+  ripple.needsUpdate = true;
+  const water = new THREE.Mesh(new THREE.CircleGeometry(POND.r + 2.5, 64), new THREE.MeshPhysicalMaterial({
+    color: '#16343a', roughness: 0.04, metalness: 0, ior: 1.33, reflectivity: 0.8, envMapIntensity: 2.2,
+    transparent: true, opacity: 0.86, normalMap: ripple, normalScale: new THREE.Vector2(0.06, 0.06) }));
   water.rotation.x = -Math.PI / 2;
   water.position.set(POND.x, -0.42, POND.z);
+  water.receiveShadow = true;
   scene.add(water);
 }
+let ripple = null;
 
 // ---------------------------------------------------------------- the house shell (the only part not from the dataset)
 function makeHouse() {
   const { x0, x1, z0, z1, wall: H, thick: T, floor } = HOUSE;
   const house = new THREE.Group();
-  const plaster = new THREE.MeshStandardMaterial({ color: '#efe6d6', roughness: 0.95 });
-  const inner = new THREE.MeshStandardMaterial({ color: '#f4efe6', roughness: 0.95 });
-  const glass = new THREE.MeshStandardMaterial({ color: '#cfe6f0', roughness: 0.05, transparent: true, opacity: 0.22 });
-  const trim = new THREE.MeshStandardMaterial({ color: '#6f4a31', roughness: 0.7 });
+  const indoor = { envMap: indoorLight(), envMapIntensity: 0.3 };
+  const plaster = plain('#d9d0be', 'plaster', { roughness: 0.92 });
+  const inner = plain('#efe9df', 'plaster', { roughness: 0.94, ...indoor });
+  const glass = new THREE.MeshPhysicalMaterial({ color: '#dfeef2', roughness: 0.02, transparent: true, opacity: 0.16, envMapIntensity: 1.8, depthWrite: false });
+  const trim = plain('#f4f1ea', 'smooth', { roughness: 0.55 });
+  const timber = plain('#6a4a32', 'wood', { roughness: 0.6 });
   const box = (w, h, d, x, y, z, m, solid = true) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
     mesh.position.set(x, y + h / 2, z);
-    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.castShadow = m !== glass;
+    mesh.receiveShadow = true;
     house.add(mesh);
     if (solid && y < 1.7) colliders.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 });
     return mesh;
   };
-  // A wall along x (at z = at) or along z (at x = at), from a to b, with door and window openings.
+  // A wall along x (at z = at) or along z (at x = at), from a to b, with door and window openings,
+  // each opening dressed with a frame, and windows with a sill and glazing bars.
   const wallRun = (axis, at, a, b, openings, m) => {
-    const piece = (from, to, y0, y1, mat = m, solid = true) => {
+    const piece = (from, to, y0, y1, mat = m, solid = true, deep = T, lift = 0) => {
       if (to - from < 1e-3 || y1 - y0 < 1e-3) return;
       const len = to - from, mid = (from + to) / 2;
-      if (axis === 'x') box(len, y1 - y0, T, mid, y0, at, mat, solid); else box(T, y1 - y0, len, at, y0, mid, mat, solid);
+      if (axis === 'x') box(len, y1 - y0, deep, mid, y0, at + lift, mat, solid); else box(deep, y1 - y0, len, at + lift, y0, mid, mat, solid);
     };
     let cursor = a;
     for (const o of [...openings].sort((p, q) => p.a - q.a)) {
       piece(cursor, o.a, 0, H);
-      if (o.kind === 'door') piece(o.a, o.b, 2.1, H);
-      else { piece(o.a, o.b, 0, 0.9); piece(o.a, o.b, 2.1, H); piece(o.a, o.b, 0.9, 2.1, glass, true); }
+      const F = 0.07, D = T + 0.06;
+      if (o.kind === 'door') {
+        piece(o.a, o.b, 2.1, H);
+        piece(o.a, o.a + F, 0, 2.1, timber, false, D); piece(o.b - F, o.b, 0, 2.1, timber, false, D); piece(o.a, o.b, 2.1 - F, 2.1, timber, false, D);
+      } else {
+        piece(o.a, o.b, 0, 0.9); piece(o.a, o.b, 2.1, H); piece(o.a + F, o.b - F, 0.9 + F, 2.1 - F, glass, true, 0.012);
+        piece(o.a, o.a + F, 0.9, 2.1, trim, false, D); piece(o.b - F, o.b, 0.9, 2.1, trim, false, D);
+        piece(o.a, o.b, 2.1 - F, 2.1, trim, false, D); piece(o.a - 0.05, o.b + 0.05, 0.9, 0.9 + F, trim, false, D + 0.1);
+        const mid = (o.a + o.b) / 2;
+        piece(mid - 0.02, mid + 0.02, 0.9 + F, 2.1 - F, trim, false, 0.04); piece(o.a + F, o.b - F, 1.48, 1.52, trim, false, 0.04);
+      }
       cursor = o.b;
     }
     piece(cursor, b, 0, H);
@@ -134,24 +214,39 @@ function makeHouse() {
   wallRun('x', 1, x0, x1, [D(-4.7, -3.7), D(4.3, 5.4)], inner);
   wallRun('z', -1, 1, z1, [], inner);
   wallRun('z', 2.5, 1, z1, [D(2.6, 3.5)], inner);
-  // Floors, one tone a room.
-  const rooms = [[x0, 0, z0, 1, '#a9815a'], [0, x1, z0, 1, '#c9c2b4'], [x0, -1, 1, z1, '#b08c66'], [-1, 2.5, 1, z1, '#aebfc4'], [2.5, x1, 1, z1, '#a9815a']];
-  for (const [a, b, c, d, tone] of rooms) {
-    const f = box(b - a, floor, d - c, (a + b) / 2, 0, (c + d) / 2, new THREE.MeshStandardMaterial({ color: tone, roughness: 0.75 }), false);
-    f.castShadow = false;
+  // Floors: boards in the living rooms, tiles in the kitchen and bathroom, a skirting board round each.
+  const boards = plain('#b98d5f', 'planks', { roughness: 0.42, ...indoor }), tiles = plain('#d8d3c8', 'tiles', { roughness: 0.3, ...indoor }), bath = plain('#b9cdd2', 'tiles', { roughness: 0.25, ...indoor });
+  const skirting = plain('#f1ede4', 'smooth', { roughness: 0.5, ...indoor });
+  const rooms = [[x0, 0, z0, 1, boards], [0, x1, z0, 1, tiles], [x0, -1, 1, z1, boards], [-1, 2.5, 1, z1, bath], [2.5, x1, 1, z1, boards]];
+  for (const [a, b, c, d, m] of rooms) {
+    box(b - a, floor, d - c, (a + b) / 2, 0, (c + d) / 2, m, false).castShadow = false;
+    const i = T / 2 + 0.008;
+    box(b - a - T, 0.09, 0.016, (a + b) / 2, floor, c + i, skirting, false); box(b - a - T, 0.09, 0.016, (a + b) / 2, floor, d - i, skirting, false);
+    box(0.016, 0.09, d - c - T, a + i, floor, (c + d) / 2, skirting, false); box(0.016, 0.09, d - c - T, b - i, floor, (c + d) / 2, skirting, false);
   }
-  box(x1 - x0 + 0.6, 0.3, z1 - z0 + 0.6, 0, -0.3, 0, trim, false);
-  // Ceiling and a gable roof.
-  box(x1 - x0, 0.1, z1 - z0, 0, H, 0, inner, false).castShadow = true;
-  const rise = 2.0, half = (z1 - z0) / 2 + 0.7, slope = Math.hypot(half, rise), roofMat = new THREE.MeshStandardMaterial({ color: '#8d4a3a', roughness: 0.85 });
+  box(x1 - x0 + 0.7, 0.34, z1 - z0 + 0.7, 0, -0.34, 0, plain('#8f8a80', 'stone', { roughness: 0.9 }), false);
+  box(1.5, 0.12, 0.9, 4.75, -0.12, z1 + 0.8, plain('#8f8a80', 'stone', { roughness: 0.9 }), false);
+  // The front door, standing open.
+  const leaf = new THREE.Mesh(new THREE.BoxGeometry(1.04, 2.02, 0.045), plain('#3f5e52', 'wood', { roughness: 0.5 }));
+  leaf.geometry.translate(0.52, 1.01, 0);
+  leaf.position.set(4.2, floor, z1);
+  leaf.rotation.y = THREE.MathUtils.degToRad(112);
+  leaf.castShadow = leaf.receiveShadow = true;
+  house.add(leaf);
+  // Ceiling and a tiled gable roof with eaves.
+  box(x1 - x0, 0.1, z1 - z0, 0, H, 0, inner, false);
+  const rise = 2.2, half = (z1 - z0) / 2 + 0.75, slope = Math.hypot(half, rise), roofMat = plain('#8a4a39', 'roof', { roughness: 0.8 });
   for (const side of [-1, 1]) {
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 + 1.2, 0.14, slope), roofMat);
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 + 1.3, 0.12, slope + 0.1), roofMat);
     slab.position.set(0, H + 0.1 + rise / 2, side * half / 2);
     slab.rotation.x = side * Math.atan2(rise, half);
     slab.castShadow = slab.receiveShadow = true;
     house.add(slab);
+    const fascia = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 + 1.3, 0.16, 0.03), trim);
+    fascia.position.set(0, H + 0.06, side * (half + 0.02));
+    house.add(fascia);
   }
-  const gable = new THREE.Shape([new THREE.Vector2(-half + 0.7, 0), new THREE.Vector2(half - 0.7, 0), new THREE.Vector2(0, rise * (half - 0.7) / half)]);
+  const gable = new THREE.Shape([new THREE.Vector2(-half + 0.75, 0), new THREE.Vector2(half - 0.75, 0), new THREE.Vector2(0, rise * (half - 0.75) / half)]);
   for (const x of [x0, x1 - T]) {
     const end = new THREE.Mesh(new THREE.ExtrudeGeometry(gable, { depth: T, bevelEnabled: false }), plaster);
     end.rotation.y = Math.PI / 2;
@@ -159,29 +254,20 @@ function makeHouse() {
     end.castShadow = true;
     house.add(end);
   }
-  // A lamp's worth of light in each room.
-  for (const [x, z, power] of [[-3.5, -2, 26], [3.5, -2, 26], [-4, 3, 16], [0.75, 3, 12], [4.75, 3, 14]]) {
-    const lamp = new THREE.PointLight('#ffe2b8', power, 11, 1.8);
-    lamp.position.set(x, H - 0.35, z);
+  // A ceiling light in each room: the fitting glows, the light it gives is warm and falls off.
+  const shade = new THREE.MeshStandardMaterial({ color: '#fff3dc', emissive: '#ffd9a0', emissiveIntensity: 3 });
+  for (const [x, z, power] of [[-3.5, 0.2, 11], [3.5, -2, 12], [-4, 3, 8], [0.75, 3, 6], [5.2, 4.2, 6]]) {
+    const lamp = new THREE.PointLight('#ffdcb0', power, 12, 1.9);
+    lamp.position.set(x, H - 0.3, z);
     house.add(lamp);
+    const fitting = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.07, 24), shade);
+    fitting.position.set(x, H - 0.045, z);
+    house.add(fitting);
   }
   scene.add(house);
 }
 
 // ---------------------------------------------------------------- from a built program to a light template
-const classOf = (m) => `${m.metalness > 0.5 ? 'm' : 'd'}${m.transparent ? 't' : ''}${m.side === THREE.DoubleSide && !m.transparent ? '2' : ''}`;
-const classMaterials = new Map();
-function classMaterial(key) {
-  if (!classMaterials.has(key)) {
-    classMaterials.set(key, new THREE.MeshStandardMaterial({
-      vertexColors: true, roughness: key[0] === 'm' ? 0.38 : 0.82, metalness: key[0] === 'm' ? 0.9 : 0,
-      transparent: key.includes('t'), opacity: key.includes('t') ? 0.34 : 1, depthWrite: !key.includes('t'),
-      side: key.includes('2') || key.includes('t') ? THREE.DoubleSide : THREE.FrontSide,
-    }));
-  }
-  return classMaterials.get(key);
-}
-
 function dropped(object, names) {
   for (let o = object; o; o = o.parent) if (o.name && names.some((n) => o.name === n || o.name.startsWith(n))) return true;
   return false;
@@ -238,7 +324,7 @@ function template(built, item) {
   const byClass = new Map();
   root.traverse((o) => {
     if (!o.isMesh || (names.length && dropped(o, names))) return;
-    const key = classOf(o.material);
+    const key = lookKey(o.material, item.indoors);
     if (!byClass.has(key)) byClass.set(key, []);
     byClass.get(key).push(flattened(o));
   });
@@ -255,7 +341,7 @@ function template(built, item) {
     merged.computeBoundingBox();
     merged.computeBoundingSphere();
     triangles += merged.attributes.position.count / 3;
-    parts.push({ geometry: merged, material: classMaterial(key) });
+    parts.push({ geometry: merged, material: lookMaterial(key) });
   }
   const out = new THREE.Box3();
   for (const p of parts) out.union(p.geometry.boundingBox);
@@ -399,6 +485,7 @@ const stats = { total: 0, done: 0, failed: [], python: 0, fromCache: 0, started:
 async function buildAll() {
   const manifest = await (await fetch('data/world.json')).json();
   const items = manifest.items;
+  for (const item of items) item.indoors = PLACE.some((p) => p.id === item.id && (p.on || inHouse(p.x, p.z)));
   stats.total = items.length;
   window.world = { stats, items, things, failures: stats.failed };
   credits(items);
@@ -416,22 +503,31 @@ async function buildAll() {
     stats.done += 1;
     progress(item);
   };
+  const keyOf = (item) => `${CACHE_VERSION}:${item.lod || 1}:${item.key}`;
   const missing = [];
   for (const item of items) {
-    const hit = await cacheGet(db, `${CACHE_VERSION}:${item.key}`);
+    const hit = await cacheGet(db, keyOf(item));
     if (hit) { land(item, hit, 0, true); await new Promise((r) => setTimeout(r)); } else missing.push(item);
   }
   if (!missing.length) return;
-  const worker = new Worker('worker.js');
+  // A few workers share the queue, light objects first so the house fills quickly.
+  const queue = [...missing].sort((p, q) => (p.lod ? 1 : 0) - (q.lod ? 1 : 0));
   const byId = new Map(missing.map((item) => [item.id, item]));
-  worker.onmessage = ({ data }) => {
-    if (data.ready) return;
-    const item = byId.get(data.id);
-    if (data.error) { stats.failed.push({ id: item.id, error: data.error }); stats.done += 1; progress(item); return; }
-    cachePut(db, `${CACHE_VERSION}:${item.key}`, data.json);
-    land(item, data.json, data.ms, false);
-  };
-  for (const item of missing) worker.postMessage({ id: item.id, program: item.program, entry: item.entry });
+  const workers = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2, queue.length));
+  for (let w = 0; w < workers; w++) {
+    const worker = new Worker('worker.js');
+    const next = () => { const item = queue.shift(); if (item) worker.postMessage({ id: item.id, program: item.program, entry: item.entry, lod: item.lod || 1 }); else worker.terminate(); };
+    worker.onmessage = ({ data }) => {
+      if (data.ready) return;
+      const item = byId.get(data.id);
+      if (data.error) { stats.failed.push({ id: item.id, error: data.error }); stats.done += 1; progress(item); } else {
+        cachePut(db, keyOf(item), data.json);
+        land(item, data.json, data.ms, false);
+      }
+      next();
+    };
+    next();
+  }
 }
 
 function progress(item) {
@@ -549,8 +645,11 @@ function animate(dt, now) {
 // ---------------------------------------------------------------- go
 makeTerrain();
 makeHouse();
+const grass = makeGrass({ pond: POND, house: HOUSE });
+scene.add(grass.mesh);
 buildAll().catch((error) => { $('building').textContent = `Could not start: ${error.message || error}`; console.error(error); });
 
+const draw = () => composer.render();
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
@@ -559,9 +658,11 @@ function frame(now) {
   walk(dt);
   animate(dt, now);
   lookAt(now);
+  if (ripple) ripple.offset.set(now * 0.000012, now * 0.000007);
+  grass.update(camera.position, now / 1000);
   sun.target.position.set(Math.round(me.x / 4) * 4, 0, Math.round(me.z / 4) * 4);
-  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 80);
-  renderer.render(scene, camera);
+  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 110);
+  draw();
 }
 requestAnimationFrame(frame);
 // For checking the world from a script: stand somewhere, look, and draw one frame now.
@@ -572,10 +673,11 @@ window.stand = (x, z, yawDegrees = 0, pitch = -0.1) => {
   camera.updateMatrixWorld(true);
   lastLook = 0;
   lookAt(performance.now());
+  grass.update(camera.position, performance.now() / 1000);
   sun.target.position.set(Math.round(me.x / 4) * 4, 0, Math.round(me.z / 4) * 4);
-  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 80);
+  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 110);
   sun.target.updateMatrixWorld();
-  renderer.render(scene, camera);
+  draw();
   return `${$('name').textContent} | ${$('about').textContent}`;
 };
 Object.assign(window, { me, colliders, scene, camera, renderer, lives, interact, walk });

@@ -16,7 +16,7 @@ onmessage = async ({ data }) => {
   try {
     await ready;
     const t0 = performance.now();
-    const json = run(data.program, data.entry);
+    const json = run(data.program, data.entry, data.lod || 1);
     postMessage({ id: data.id, json, ms: performance.now() - t0 });
   } catch (error) {
     postMessage({ id: data.id, error: String(error.message || error).trim().split('\n').pop() });

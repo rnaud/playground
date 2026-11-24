@@ -50,29 +50,36 @@ function extrude(g) {
   const tris = [];
   const outers = g.loops.filter((l) => l.length > 2 && area(l) > 0);
   const holes = g.loops.filter((l) => l.length > 2 && area(l) < 0);
-  const layers = Math.max(1, Math.ceil(Math.abs(g.twist || 0) / 3));
-  const tan = Math.tan(THREE.MathUtils.degToRad(g.taper || 0));
+  const span = g.hi - g.lo, tan = Math.tan(THREE.MathUtils.degToRad(g.taper || 0));
+  const twisted = Math.max(1, Math.ceil(Math.abs(g.twist || 0) / 3));
   for (const outer of outers) {
     const mine = holes.filter((h) => inside(h[0], outer));
     const loops = [outer, ...mine];
-    const offsets = loops.map((l, k) => miters(l, k === 0 ? 1 : 1));
-    const level = (k) => {
-      const z = g.lo + (g.hi - g.lo) * k / layers, inset = (z - g.lo) * tan;
-      const turn = THREE.MathUtils.degToRad((g.twist || 0) * k / layers), c = Math.cos(turn), s = Math.sin(turn);
+    const offsets = loops.map((l) => miters(l, 1));
+    // Heights to cut the prism at, and how far the outline is drawn in at each: the rounded or
+    // chamfered rims a fillet asked for, then the straight (or twisted) wall between them.
+    const xs = outer.map((p) => p[0]), ys = outer.map((p) => p[1]);
+    const limit = Math.min(span * 0.45, 0.3 * Math.min(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)));
+    const round = g.round || {}, steps = round.flat ? 1 : 4;
+    const rb = Math.max(0, Math.min(round.bottom || 0, limit)), rt = Math.max(0, Math.min(round.top || 0, limit));
+    const cuts = [];
+    if (rb > 0) for (let k = 0; k < steps; k++) { const a = k / steps * Math.PI / 2; cuts.push([g.lo + rb * (1 - Math.cos(a)), round.flat ? rb : rb * (1 - Math.sin(a))]); }
+    for (let k = 0; k <= twisted; k++) cuts.push([g.lo + rb + (span - rb - rt) * k / twisted, 0]);
+    if (rt > 0) for (let k = 1; k <= steps; k++) { const a = k / steps * Math.PI / 2; cuts.push([g.hi - rt + rt * Math.sin(a), round.flat ? rt : rt * (1 - Math.cos(a))]); }
+    const rings = cuts.map(([z, drawn]) => {
+      const inset = drawn + (z - g.lo) * tan;
+      const turn = THREE.MathUtils.degToRad((g.twist || 0) * (span ? (z - g.lo) / span : 0)), c = Math.cos(turn), s = Math.sin(turn);
       return loops.map((loop, li) => loop.map((p, i) => {
         let x = p[0], y = p[1];
         if (inset) { const m = offsets[li][i]; x -= m[0] * inset * m[2]; y -= m[1] * inset * m[2]; }
         return [x * c - y * s, x * s + y * c, z];
       }));
-    };
-    const rings = [];
-    for (let k = 0; k <= layers; k++) rings.push(level(k));
+    });
     const v2 = (l) => l.map((p) => new THREE.Vector2(p[0], p[1]));
     const faces = THREE.ShapeUtils.triangulateShape(v2(outer), mine.map(v2));
-    const flat = (k) => rings[k].flat();
-    const bottom = flat(0), top = flat(layers);
+    const bottom = rings[0].flat(), top = rings[rings.length - 1].flat();
     for (const [a, b, c] of faces) { tris.push(bottom[c], bottom[b], bottom[a]); tris.push(top[a], top[b], top[c]); }
-    for (let k = 0; k < layers; k++) {
+    for (let k = 0; k < rings.length - 1; k++) {
       loops.forEach((loop, li) => {
         const lower = rings[k][li], upper = rings[k + 1][li], n = loop.length;
         for (let j = 0; j < n; j++) {
@@ -219,6 +226,7 @@ function material(look, painted, thin) {
     clearcoat: l.coat ?? 0, sheen: l.sheen ?? 0, transparent: opacity < 1, opacity, depthWrite: opacity >= 1,
     side: opacity < 1 || thin ? THREE.DoubleSide : THREE.FrontSide,
   });
+  m.userData.kind = l.kind || '';
   if (l.emission) { m.emissive = new THREE.Color(l.color || '#fff1dc'); m.emissiveIntensity = Math.min(l.emission / 6, 2); }
   looks.set(key, m);
   return m;

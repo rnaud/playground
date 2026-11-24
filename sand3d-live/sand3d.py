@@ -144,6 +144,7 @@ def segments(r, sweep=360.0):
         per_turn = TURN_MIN
     else:
         per_turn = min(max(math.ceil(math.pi / math.acos(1 - CHORD / r)), TURN_MIN), TURN_MAX)
+    per_turn = max(4, round(per_turn * _STATE.get("detail", 1.0)))
     return max(1, math.ceil(per_turn * abs(sweep) / 360.0 - 1e-9))
 
 
@@ -177,6 +178,20 @@ def facets(n=None, smooth=None):
     return _FacetScope(n, previous)
 
 
+def detail(k=None):
+    """How finely curves are cut, as a share of the original's: 1 as written, 0.4 for a lighter
+    mesh (rounds get 0.4 of their segments, splines and lofts 0.4 of their steps). Not part of
+    sand3d: the page asks for it, to keep heavy objects walkable."""
+    if k is None:
+        return _STATE.get("detail", 1.0)
+    _STATE["detail"] = float(k)
+    return k
+
+
+def _steps(n):
+    return max(1, round(n * _STATE.get("detail", 1.0)))
+
+
 def units(name=None):
     if name is None:
         return _STATE["unit"]
@@ -187,7 +202,7 @@ def units(name=None):
 
 
 def empty_scene():
-    _STATE.update(facets=None, unit="mm", scale=0.001, smooth=False)
+    _STATE.update(facets=None, unit="mm", scale=0.001, smooth=False)        # (detail is the host's, and stays)
     del NOTES[:]
     _JOINTS.clear()
 
@@ -317,7 +332,7 @@ def polygon(n, d):
 def superellipse(w, d, n=2, taper=0):
     if w == 0 and d == 0:
         return Profile([[(0, 0)]])
-    sides = segments(max(w, d) / 2) if _STATE["facets"] is not None else 48
+    sides = segments(max(w, d) / 2) if _STATE["facets"] is not None else max(8, _steps(48))
     dense = []
     for k in range(256):
         t = 2 * math.pi * k / 256
@@ -373,6 +388,7 @@ def _centripetal(pts, closed, steps=12, tangents=(None, None)):
         back = None if start is None else [-float(c) for c in start]
         ext = [phantom(vs[0], vs[1], back)] + vs + [phantom(vs[-1], vs[-2], end)]
     out = []
+    steps = max(2, _steps(steps))
     for i in range(m if closed else m - 1):
         p0, p1, p2, p3 = ext[i:i + 4]
         t0 = 0.0
@@ -1278,7 +1294,7 @@ def loft(name, *sections, follow=False, loop=False, tip="round", rings=0):
         raise ValueError("loft: two sections at least")
     n = max(len(r) for r in placed)
     shapes = [_resample(r, n) for r in placed]
-    steps = 1 if _STATE["facets"] is not None or len(shapes) == 2 else 6
+    steps = 1 if _STATE["facets"] is not None or len(shapes) == 2 else _steps(6)
     out = []
     count = len(shapes)
     for i in range(count if loop else count - 1):
@@ -1608,8 +1624,29 @@ def _approximate(verb, said):
     return skip
 
 
-fillet = _approximate("fillet", "edges left sharp")
-chamfer = _approximate("chamfer", "edges left sharp")
+def _rim(verb):
+    """fillet and chamfer, for what this port can do: the top and bottom rims of an extruded part."""
+    def apply(ob, r=None, edges="all", *args, d=None, **kwargs):
+        r = d if r is None else r
+        words = (" ".join(map(str, edges)) if isinstance(edges, (list, tuple)) else str(edges)).lower()
+        top = any(w in words for w in ("all", "top", "+z"))
+        bottom = any(w in words for w in ("all", "bottom", "-z"))
+        done = False
+        for part in _flat([ob]):
+            for piece in (part.pieces or []) if isinstance(part, Node) else []:
+                g = piece.geom
+                if (g["t"] == "extrude" and (top or bottom) and not g.get("twist")
+                        and isinstance(r, (int, float)) and r > 0):
+                    piece.geom = dict(g, round={"top": r if top else 0, "bottom": r if bottom else 0, "flat": verb == "chamfer"})
+                    done = True
+        _note(f"{verb}: only the top and bottom rims of extruded parts are shaped" if done else f"{verb}: edges left sharp")
+        return ob
+    apply.__name__ = verb
+    return apply
+
+
+fillet = _rim("fillet")
+chamfer = _rim("chamfer")
 soften = _approximate("soften", "edges left sharp")
 smooth = _approximate("smooth", "shading left as built")
 shell = _approximate("shell", "left solid")
@@ -2574,7 +2611,7 @@ def displace(ob, amount, size, noise="perlin", octaves=1, seed=0, direction="nor
                 target = max(target, math.pi * box_ / _STATE["facets"])
             if step != 0:
                 _, _, areas = _face_data(V, F)
-                floor_ = math.sqrt(float(areas.sum()) / (0.43 * FACE_BUDGET))
+                floor_ = math.sqrt(float(areas.sum()) / (0.43 * FACE_BUDGET * _STATE.get("detail", 1.0)))
                 if floor_ > target:
                     _note("displace: refined more coarsely than asked, to stay light")
                     target = floor_
@@ -2703,14 +2740,15 @@ def scene(root):
     def geom(g, colours=None):
         if g["t"] == "mesh":
             V, F = g["v"], g["f"]
-            return {"t": "mesh", "v": [round(float(c), 3) for c in V.reshape(-1)], "f": [int(i) for i in F.reshape(-1)],
+            return {"t": "mesh", "v": [round(float(c), 2) for c in V.reshape(-1)], "f": [int(i) for i in F.reshape(-1)],
                     "c": None if colours is None else [round(float(c), 3) for c in colours.reshape(-1)],
                     "flat": bool(g.get("flat")), "thin": bool(g.get("thin"))}
         if g["t"] == "extrude":
             return {"t": "extrude", "loops": [[[round(x, 5), round(y, 5)] for x, y in loop] for loop in g["loops"]],
-                    "lo": g["lo"], "hi": g["hi"], "taper": g["taper"], "twist": g["twist"], "flat": bool(g.get("flat"))}
+                    "lo": g["lo"], "hi": g["hi"], "taper": g["taper"], "twist": g["twist"], "flat": bool(g.get("flat")),
+                    "round": g.get("round")}
         return {"t": "rings", "loop": g["loop"], "caps": g["caps"], "flat": bool(g.get("flat")),
-                "rings": [[[round(c, 5) for c in p] for p in ring] for ring in g["rings"]]}
+                "rings": [[[round(c, 3) for c in p] for p in ring] for ring in g["rings"]]}
 
     def pieces_of(node, look):
         out = []
@@ -2751,10 +2789,11 @@ def scene(root):
     return {"nodes": nodes, "scale": _STATE["scale"], "notes": list(NOTES)}
 
 
-def run(source, entry):
+def run(source, entry, lod=1.0):
     """Build one program from its source and the name of its entry function."""
     import json
     empty_scene()
+    detail(lod)
     space = {"__name__": "__sand3d_program__"}
     exec(compile(source, "<sand3d program>", "exec"), space)
     if not entry or entry not in space:

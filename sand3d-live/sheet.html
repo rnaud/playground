@@ -25,7 +25,7 @@
 <div id="grid"></div>
 <script type="module">
 // A vetting tool: each program built live (left) beside the dataset's render (right).
-// sheet.html?data=<json>&from=0&n=30
+// sheet.html?data=<json>&from=0&n=30&lod=1
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { build, dispose, loadCsg } from './build.js';
@@ -64,7 +64,7 @@ for (const [i, item] of items.entries()) {
   const entry = { i: from + i, key: item.key, title: item.title };
   try {
     const t0 = performance.now();
-    const described = JSON.parse(run(item.program, item.entry));
+    const described = JSON.parse(run(item.program, item.entry, Number(q.get('lod') || 1)));
     const t1 = performance.now();
     const b = build(described);
     const t2 = performance.now();

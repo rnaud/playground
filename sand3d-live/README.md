@@ -32,8 +32,11 @@ The mesh-level verbs need numpy, which Pyodide loads on request. `noise`, `vary`
 same seeds give the same layouts; `displace` refines to a triangle budget rather than to
 the original's density, and `branches` samples its curves more coarsely.
 
+`fillet` and `chamfer` shape the top and bottom rims of extruded parts only. `detail(k)` and
+`run(source, entry, lod)` are this port's own: they cut curves more coarsely for lighter meshes.
+
 Approximated, and said so in the viewer: `join` and `merge` overlay their pieces without
-fusing them; `fillet`, `chamfer`, `soften`, `shell`, `bend`, `twist`, `taper`, `dent` and
+fusing them; `soften`, `shell`, `bend`, `twist`, `taper`, `dent` and
 `lay` leave the solid as built; `gear`, `knurl` and `thread` are plain cylinders; `snap`
 and `scatter` read a part's surface before its cuts.
 
