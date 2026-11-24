@@ -1,0 +1,9 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#293c32"><title>Final Fantasy VII · The Paper Journey</title><link rel="stylesheet" href="style.css"></head>
+<body><main>
+<svg id="world" role="img" aria-label="An animated pop-up paper map of Final Fantasy VII" preserveAspectRatio="xMidYMid slice"></svg>
+<header><a href="../">← Playground</a><span class="tools"><button id="mode">Watch film</button> <button id="open-scenes">Scenes ☰</button></span></header>
+<section id="captions" aria-label="Current scene"><div class="location" id="location"></div><h1 id="title"></h1><p id="caption"></p></section>
+<footer><span id="walk-help">Move with WASD or arrow keys · Click or tap to walk · Head south to continue</span><button id="play" aria-label="Pause">Ⅱ</button><label class="sr" for="seek">Film position</label><input type="range" id="seek" min="0" step=".1" value="0"><output id="clock"></output><button id="story">Story notes</button></footer>
+<dialog id="drawer"><form method="dialog"><button aria-label="Close">Close ×</button></form><div id="panel"></div></dialog>
+<noscript>Enable JavaScript to play the illustrated journey.</noscript>
+</main><script type="module" src="reader.js"></script></body></html>
