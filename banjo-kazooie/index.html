@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Banjo-Kazooie — Spiral Mountain Pop-Up Story</title>
+<link rel="icon" href="data:,">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #b9cf7a; font-family: Georgia, 'Times New Roman', serif; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+
+  /* Papercraft Storybook HUD */
+  .hud-top {
+    position: fixed; top: 16px; left: 16px; z-index: 10;
+    background: #faf3e0; color: #332216;
+    border: 2px solid #4a311d; border-radius: 6px;
+    padding: 10px 14px; max-width: 310px;
+    box-shadow: 0 4px 0 rgba(74, 49, 29, 0.25), 0 8px 18px rgba(51, 34, 22, 0.22);
+    pointer-events: auto;
+  }
+  .hud-title {
+    font-size: 15px; font-weight: bold; letter-spacing: 0.04em;
+    text-transform: uppercase; color: #8c3d1e; margin: 0 0 2px;
+  }
+  .hud-sub {
+    font-size: 12px; font-style: italic; color: #6b5239; margin: 0 0 8px;
+  }
+  .chapters {
+    display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  }
+  .chap-dot {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 2px solid #5c3c22; background: #e8dcc0; color: #6e5338;
+    font: bold 12px/24px Georgia, serif; text-align: center;
+    cursor: pointer; transition: transform 0.18s ease, background 0.2s ease;
+    position: relative;
+  }
+  .chap-dot:hover { transform: translateY(-2px); }
+  .chap-dot.found {
+    background: #f4c430; color: #3a220c; border-color: #8a5610;
+    box-shadow: 0 2px 0 rgba(138, 86, 16, 0.45);
+  }
+  .chap-dot.active {
+    transform: scale(1.14);
+    box-shadow: 0 0 0 3px #d93c2e, 0 3px 6px rgba(51, 34, 22, 0.3);
+  }
+  .hud-progress {
+    margin-top: 7px; font-size: 11.5px; color: #5c442c;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+
+  /* Story Pop-Up Card */
+  .story-card {
+    position: fixed; left: 50%; bottom: 26px; z-index: 12;
+    transform: translateX(-50%) translateY(130%) rotate(-1.5deg);
+    width: min(620px, calc(100vw - 32px));
+    background: #fcf6e6; color: #332216;
+    border: 2.5px solid #4a311d; border-radius: 8px;
+    padding: 16px 20px 14px;
+    box-shadow: 0 6px 0 rgba(74, 49, 29, 0.28), 0 14px 28px rgba(40, 24, 12, 0.32);
+    transition: transform 0.42s cubic-bezier(0.22, 1.28, 0.36, 1), opacity 0.28s ease;
+    opacity: 0; pointer-events: none;
+  }
+  .story-card.open {
+    transform: translateX(-50%) translateY(0) rotate(0deg);
+    opacity: 1; pointer-events: auto;
+  }
+  .story-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-bottom: 6px; border-bottom: 1.5px dashed #cbb58c; padding-bottom: 6px;
+  }
+  .story-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .story-num {
+    background: #d93c2e; color: #fff6e4; font-weight: bold; font-size: 11px;
+    padding: 2px 8px; border-radius: 99px; letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .story-title {
+    font-size: 17px; font-weight: bold; color: #3a2210; margin: 0;
+  }
+  .story-close {
+    background: #eadbc0; border: 1.5px solid #6b4b2e; color: #4a311d;
+    border-radius: 4px; padding: 2px 8px; font: bold 12px Georgia, serif;
+    cursor: pointer;
+  }
+  .story-close:hover { background: #f4c430; }
+  .story-speaker {
+    font-size: 12px; font-weight: bold; text-transform: uppercase;
+    letter-spacing: 0.06em; color: #2e66a8; margin-bottom: 4px;
+  }
+  .story-body {
+    font-size: 14.5px; line-height: 1.48; margin: 0 0 8px; color: #3b2818;
+  }
+  .story-next {
+    font-size: 12px; font-style: italic; color: #7a5c3c;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+
+  .hint {
+    position: fixed; right: 16px; bottom: 14px; z-index: 8;
+    font: italic 12.5px/1.3 Georgia, 'Times New Roman', serif;
+    color: #fff8e8; opacity: .9; letter-spacing: .02em; pointer-events: none;
+    text-shadow: 0 1px 3px #3d2814, 0 0 8px rgba(51, 34, 22, 0.45);
+    background: rgba(51, 34, 22, 0.32); padding: 4px 10px; border-radius: 99px;
+  }
+  body.capture-mode .hud-top, body.capture-mode .story-card, body.capture-mode .hint { display: none !important; }
+</style>
+<script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js", "papercraft/": "./" } }</script>
+</head>
+<body>
+  <div class="hud-top" id="hud">
+    <div class="hud-title">Banjo-Kazooie</div>
+    <div class="hud-sub">Spiral Mountain &mdash; A Pop-Up Storybook</div>
+    <div class="chapters" id="chapters"></div>
+    <div class="hud-progress">
+      <span id="chap-status">Walk the path to unfold the story</span>
+      <span id="jiggy-count">Jiggies: 0 / 5</span>
+    </div>
+  </div>
+
+  <div class="story-card" id="story-card" aria-live="polite">
+    <div class="story-header">
+      <div class="story-badge">
+        <span class="story-num" id="story-num">Chapter I</span>
+        <h2 class="story-title" id="story-title">Morning at Banjo's Cottage</h2>
+      </div>
+      <button class="story-close" id="story-close" type="button">Close</button>
+    </div>
+    <div class="story-speaker" id="story-speaker">Banjo &amp; Kazooie</div>
+    <p class="story-body" id="story-body"></p>
+    <div class="story-next">
+      <span id="story-hint">Follow the sandy spiral trail to the next landmark.</span>
+      <span id="story-dist"></span>
+    </div>
+  </div>
+
+  <div class="hint" id="hint">WASD / Arrows to walk &bull; Click ground to fold/unfold &bull; Drag to look</div>
+
+  <script>
+    if (new URLSearchParams(location.search).has('capture')) document.body.classList.add('capture-mode');
+  </script>
+  <script type="module" src="./scene.js"></script>
+</body>
+</html>
