@@ -166,8 +166,8 @@ for n, src in [('metro', 'ceil-metro'), ('stone', 'wall-stone'), ('brick', 'wall
     if im: add('ceil_' + n, flat(shrink(im.crop((0, 0, im.width, im.width)), (FLOOR, FLOOR)), 48))
 
 # ---- things lying on the floor, seen from above: (sheet, [(name, width in voxels)]), two rows of three ----
-for sheet, objs in [('clutter1', [('paper', 44), ('manhole', 40), ('drain', 28), ('boneheap', 48), ('spill', 44), ('straw', 56)]),
-                    ('clutter2', [('rug', 104), ('rug2', 88), ('leaves', 56), ('oil', 48), ('plans', 52), ('cable', 40)])]:
+for sheet, objs in [('clutter1', [('paper', 88), ('manhole', 80), ('drain', 56), ('boneheap', 96), ('spill', 88), ('straw', 112)]),
+                    ('clutter2', [('rug', 208), ('rug2', 176), ('leaves', 112), ('oil', 96), ('plans', 104), ('cable', 80)])]:
     im = load(sheet)
     if not im: continue
     for (name, wv), c in zip(objs, components(key(im), len(objs), 8, 3, rows=2)): add('flat_' + name, flat(fit(c, width=wv)))
@@ -180,7 +180,7 @@ SHEETS = [
     ('props-low', [('drum', 44), ('cask', 44), ('table', 34), ('crate', 36), ('exit', 80)]),
     ('props-pickups', [('baguette', 14), ('wine', 34), ('helmet', 20), ('bullets', 15), ('shells', 17), ('cells', 16), ('key_red', 16), ('key_blue', 16)]),
     ('props-metro', [('hanglamp', 30), ('bench', 20), ('bin', 18), ('signal', 44), ('lantern', 28)]),
-    ('props-rooms', [('chandelier', 44), ('arch', 76), ('rack', 60), ('workbench', 34)]),
+    ('props-rooms', [('chandelier', 44), ('arch', 190), ('rack', 60), ('workbench', 34)]),
     ('props-metro2', [('kiosk', 76), ('suitcases', 34), ('scale', 72), ('trolley', 40), ('morris', 112)]),
     ('props-under', [('bones', 20), ('candles', 24), ('barrow', 26), ('bottles', 22), ('sacks', 26)]),
     ('props-chateau', [('armchair', 46), ('globe', 52), ('armour', 84), ('clock', 92), ('palm', 72)]),
@@ -270,7 +270,7 @@ def carve2(side, top):                                               # `top` may
     return sheet, [W, Lg, H, cols]
 sides = load('guns-side')
 if sides:
-    for (name, length, thick), a in zip([('pistol', 40, 7), ('shotgun', 92, 9), ('smg', 72, 9), ('tesla', 74, 13)], components(key(sides), 4)):
+    for (name, length, thick), a in zip([('pistol', 80, 14), ('shotgun', 184, 18), ('smg', 144, 18), ('tesla', 148, 26)], components(key(sides), 4)):
         side = fit(a, width=length)
         if name == 'tesla': glow(side, 'cyan')
         sheet, dims = carve2(side, thick); add('vox_gun_' + name, sheet); vox['gun_' + name] = dims
@@ -278,7 +278,7 @@ im = load('hand')
 if im:
     hv = components(key(im), 2)
     if len(hv) == 2:
-        side = fit(hv[0], width=50); sheet, dims = carve2(side, shrink(hv[1], (50, max(3, round(hv[1].height * 50 / hv[1].width))))); add('vox_hand', sheet); vox['hand'] = dims
+        side = fit(hv[0], width=100); sheet, dims = carve2(side, shrink(hv[1], (100, max(3, round(hv[1].height * 100 / hv[1].width))))); add('vox_hand', sheet); vox['hand'] = dims
 
 # ---- pack: tallest first, in rows ----
 ATLAS_W, x, y, row = 2048, 0, 0, 0

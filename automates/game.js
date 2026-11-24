@@ -68,14 +68,14 @@ const STOCK2 = { M: '025673', C: '8E', B: 'OQR', W: 'aeF', S: LEVEL === 1 ? 'hn'
   for (let y = 0; y < DH; y++) for (let x = 0; x < DW; x++) { const t = tiles[y][x], pool = STOCK[t]; if (!pool) continue;
     const faces = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([a, b]) => (tiles[y + b] || [])[x + a]).filter(f => f && isFloor(f) && f !== 'D');
     if (!faces.length || faces.some(f => !HOME[t].includes(f))) continue;      // only walls that face their own room: a wine tun does not belong on the workshop's side of the cellar wall
-    const h = wallHash(x, y); if (h % 100 < 12) continue;
+    const h = wallHash(x, y); if (h % 100 < 24) continue;
     let k = pool[(h >>> 8) % pool.length]; if (k === last[t] || (tiles[y - 1] && tiles[y - 1][x] === k)) k = pool[((h >>> 8) + 5) % pool.length]; tiles[y][x] = last[t] = k; } }              // each decorated wall and the plain wall it is a variant of
 // The plan is now scaled up: corridors come out two cells wide and rooms twice as long and broad, with the art at the same
 // size as before. A decorated wall keeps its decoration on every other cell, and a door becomes a pair of leaves.
 { const plan = tiles.map(row => row.slice()), at = (x, y) => (plan[y] || [])[x] || ' ';
   tiles.length = 0;
   for (let y = 0; y < GH; y++) tiles.push(Array.from({ length: GW }, (_, x) => { const t = plan[y >> 1][x >> 1]; if (!WALL_BASE[t] || !((x + y) & 1)) return t; const b = WALL_BASE[t], h = wallHash(x * 3 + 1, y * 5 + 2), s = STOCK2[b], k = s[(h >>> 8) % s.length];   // the other half of each decorated stretch: plain, or one of the smaller pieces
-    return h % 100 < 55 && k !== t ? k : b; }));
+    return h % 100 < 36 && k !== t ? k : b; }));
   for (const d of doors) {
     d.vertical = !isFloor(at(d.cx - 1, d.cy)); d.floor = d.vertical ? at(d.cx, d.cy - 1) : at(d.cx - 1, d.cy);
     const X = d.cx * K, Y = d.cy * K;
@@ -415,7 +415,7 @@ function lathe(name, s) {                                                     //
     return k < 0 ? c[z * w + Math.round(mid[z])] : k;
   });
 }
-const box = (name, s, D) => model(name, s.w, D, s.h, (x, y, z) => { const k = s.c[z * s.w + x]; return k < 0 ? null : y === 0 || y === D - 1 ? k : shade(k, .85); });
+const box = (name, s, D, vox) => model(name, s.w, D, s.h, (x, y, z) => { const k = s.c[z * s.w + x]; return k < 0 ? null : y === 0 || y === D - 1 ? k : shade(k, .85); }, vox);
 // the Baron's machines: frames w and b walk, a attacks
 // The three walking machines are true 3D voxel models, carved from turnaround sheets by tools/build_art.py. Each is split into
 // a torso, two arms and two legs, which move on their own: legs swing from the hip, arms rise from the shoulder to aim, and an
@@ -473,7 +473,7 @@ for (const n of ['bullets', 'shells', 'cells']) { const s = sprite(n); box('a_' 
 { const s = sprite('helmet'), m = inflate(s, Math.round(s.w * .8), { round: 1.2 }); model('a_helmet', m.W, m.L, m.H, m.fn(0)); }
 lathe('a_wine', sprite('wine')); lathe('a_lamp', sprite('lamp')); lathe('a_drum', sprite('drum')); lathe('a_column', sprite('column', 0, WH * VPU));
 box('a_cask', sprite('cask'), 44); lathe('a_table', sprite('table')); box('a_exit', sprite('exit'), 28);
-lathe('a_chandelier', sprite('chandelier')); box('a_arch', sprite('arch', WV + 6, LOWC * VPU), 12); box('a_rack', sprite('rack'), 40); box('a_workbench', sprite('workbench'), 16); box('a_train', sprite('train'), 36);
+lathe('a_chandelier', sprite('chandelier')); box('a_arch', sprite('arch', (WV + 6) * 2, LOWC * VPU * 2), 24, VOX / 2); box('a_rack', sprite('rack'), 40); box('a_workbench', sprite('workbench'), 16); box('a_train', sprite('train'), 36);
 for (const [n, depth] of [['kiosk', 26], ['suitcases', 26], ['trolley', 30], ['barrow', 24], ['bottles', 30], ['armchair', 38], ['armour', 14], ['clock', 20], ['anvil', 16], ['repair', 16]]) box('a_' + n, sprite(n), depth);   // the second set of furniture: flat-sided things are extruded,
 { const s = sprite('skylight'), m = (s.w - 1) / 2; model('a_skylight', s.w, s.w, s.h, (x, y, z) => { const a = s.c[z * s.w + x], b = s.c[z * s.w + y]; return a < 0 || b < 0 ? null : Math.abs(y - m) >= Math.abs(x - m) ? a : b; }); }   // a skylight is a pyramid: the same glazed face on all four sides
 for (const [n, depth] of [['chimney', 28], ['coop', 30], ['cafe', 26], ['washing', 3], ['aerial', 4], ['zincstack', 28]]) box('a_' + n, sprite(n), depth);   // the roofs' furniture
@@ -489,7 +489,7 @@ for (const n of ['vent', 'tank', 'searchlight']) lathe('a_' + n, sprite(n));
   const ms = sprite('mast'), mid = ms.w >> 1; model('a_mast', ms.w, ms.w, ms.h, (x, y, z) => { const a = ms.c[z * ms.w + x], b = ms.c[z * ms.w + y]; return (y === mid || y === mid - 1) && a >= 0 ? a : (x === mid || x === mid - 1) && b >= 0 ? b : null; }, .5); }   // the mast: the same lattice seen from the front and from the side, crossed
 box('a_turnstile', sprite('turnstile'), 14); box('a_sarcophagus', sprite('sarcophagus'), 30); box('a_well', sprite('well'), 40); for (const n of ['booth', 'monument']) lathe('a_' + n, sprite(n));
 for (const n of ['scale', 'morris', 'bones', 'candles', 'sacks', 'globe', 'palm', 'coil', 'urn', 'statue']) lathe('a_' + n, sprite(n));                                                                                    // round ones are turned
-for (const n of ['paper', 'manhole', 'drain', 'boneheap', 'spill', 'straw', 'rug', 'rug2', 'leaves', 'oil', 'plans', 'cable']) { const s = sprite('flat_' + n); model('f_' + n, s.w, s.h, 1, (x, y) => { const k = s.c[y * s.w + x]; return k < 0 ? null : k; }); }   // things lying on the floor: one voxel thick, drawn from above
+for (const n of ['paper', 'manhole', 'drain', 'boneheap', 'spill', 'straw', 'rug', 'rug2', 'leaves', 'oil', 'plans', 'cable']) { const s = sprite('flat_' + n); model('f_' + n, s.w, s.h, 1, (x, y) => { const k = s.c[y * s.w + x]; return k < 0 ? null : k; }, VOX / 2); }   // things lying on the floor: one voxel thick, drawn from above
 for (const [n, depth] of [['hsign', 4], ['hclock', 10], ['hams', 8], ['hoist', 10], ['pipes', 12], ['parts', 8], ['banner', 2]]) box('a_' + n, sprite(n), depth);   // and things that hang from the ceiling
 for (const n of ['ring', 'fan', 'roots']) lathe('a_' + n, sprite(n));
 lathe('a_hang', sprite('hanglamp')); lathe('a_lantern', sprite('lantern')); lathe('a_bin', sprite('bin')); lathe('a_signal', sprite('signal')); box('a_bench', sprite('bench'), 14);
@@ -511,7 +511,7 @@ model('a_shield', 26, 3, 46, (x, y, z) => z > 31 && z < 35 && x > 6 && x < 19 ? 
 for (const n of ['a_shot', 'a_spark', 'a_shell', 'a_bolt']) { const d = MODEL_DEFS[n], f = d.fn; d.fn = (x, y, z) => { const c = f(x, y, z); return c == null ? null : c | GLOW; }; }   // shots make their own light
 // weapons are relief cards cut from the first-person sheet: always seen from behind, exactly as drawn
 for (const n of ['a_baguette', 'a_wine', 'a_helmet', 'a_bullets', 'a_shells', 'a_cells', 'a_key_red', 'a_key_blue']) MODEL_DEFS[n].o = voxOpt(VOX * .62);   // things to pick up are life-size beside you, not waist-high
-const WEAPON_VOX = 0.085, GUN_VOX = 0.125, GUN_UP = 0, HAND = [0, -.6, 0, -.5, -.25];   // HAND: where the hand sits on the gun (along it, back, across, down) and how it is tilted
+const WEAPON_VOX = 0.085, GUN_VOX = 0.0625, GUN_UP = 0, HAND = [0, -.6, 0, -.5, -.25];   // HAND: where the hand sits on the gun (along it, back, across, down) and how it is tilted
 // in the hand the weapons are true 3D models carved from their side views; the cards above are what lies on the floor to be picked up
 for (const n of ['pistol', 'shotgun', 'smg', 'tesla', 'hand']) { const v = voxels(n === 'hand' ? n : 'gun_' + n); model('v_' + n, v.W, v.L, v.H, (x, y, z) => { const k = v.c[x + v.W * (y + v.L * z)]; return k < 0 ? null : k; }, GUN_VOX); }
 for (const n of ['w_pistol', 'w_shotgun', 'w_smg', 'w_tesla']) { const m = inflate(sprite(n, 0, 0, SPRITE_FLIP), 8, { even: true }); model(n, m.W, m.L, m.H, m.fn(0), WEAPON_VOX); }
@@ -537,17 +537,19 @@ for (const [cx, cy, ox] of [[26, 9, -4], [33, 9, 4], [28, 5, 0], [32, 13, 0]]) F
 if (LEVEL === 2) { for (const [cx, cy] of [[8, 25], [17, 24], [26, 24], [20, 7], [17, 11], [24, 10]]) { const p = C(cx, cy, 2, 2); FIX.push({ model: 'a_skylight', ...p, z: heightAt(p.x, p.y) + 9, R: 80, I: .8, col: WARM }); }   // skylights: the rooms below are lit
   for (const [cx, cy] of [[20, 21], [31, 19], [17, 4], [23, 4]]) { const p = C(cx, cy, 4, -4); FIX.push({ model: 'a_searchlight', ...p, z: heightAt(p.x, p.y) + 17, R: 110, I: .8, col: COLD }); } }
 const lights = FIX.map(f => ({ x: f.x, y: f.y, z: f.z, R: f.R, I: f.I, col: f.col, flick: f.flick, air: 1 }));
-const FARK = 1.55 * .48;                                                      // how much of a lamp's direct light the far map carries
+const FARK = 1.55 * .4;                                                      // how much of a lamp's direct light the far map carries
 for (let cy = 0; cy < GH; cy++) for (let cx = 0; cx < GW; cx++) {            // sconces, lit windows and Tesla tubes on the walls
   const t = tile(cx, cy), k = { L: [60, .65, WARM], X: [56, .5, WARM], T: [62, .6, COLD], Y: [62, .5, COLD], 9: [40, .5, AMBER], d: [64, .7, AMBER], u: [52, .55, WARM], l: [44, .45, WARM] }[t];
   if (k) for (const [sx, sy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (isFloor(tile(cx + sx, cy + sy)) && faceOf(t, cx, cy, sx, sy) === t) lights.push({ x: cx * CS + 8 + sx * 11, y: cy * CS + 8 + sy * 11, z: 13 + Math.max(0, baseAt(cx + sx, cy + sy)), R: k[0], I: k[1], col: k[2], air: .5 });
 }
 for (let j = 1; j < GH; j += 2) for (let i = 1; i < GW; i += 2) {            // the lamps painted on the flat ceilings sit where four cells meet
   const c = [[i - 1, j - 1], [i, j - 1], [i - 1, j], [i, j]].find(([a, b]) => 'wki'.includes(tile(a, b)) || (tile(a, b) === 'm' && !vaulted(a, b)));
-  if (c) lights.push({ x: i * CS + (c[0] < i ? -1 : 1), y: j * CS + (c[1] < j ? -1 : 1), z: WH - 3, R: 60, I: .28, col: WARM, air: .5 });
+  if (c) lights.push({ x: i * CS + (c[0] < i ? -1 : 1), y: j * CS + (c[1] < j ? -1 : 1), z: WH - 3, R: 60, I: .17, col: WARM, air: .5 });
 }
 const FLOOR_TINT = { z: [.7, .74, .9], '.': [.6, .6, .8], m: [.85, .87, .9], r: [.55, .5, .5], c: [1, .55, .32], b: [.95, .75, .55], w: [1, .7, .42], k: [1, .32, .28], g: [.5, 1, .42], o: [.75, .74, .92], i: [.75, .8, .88] };
-const AMBIENT = { z: [.68, .62, .8], '.': [.5, .46, .62], m: [.36, .38, .44], r: [.26, .27, .32], c: [.27, .23, .2], b: [.25, .21, .19], w: [.42, .38, .34], k: [.42, .38, .34], g: [.5, .46, .62], o: [.5, .46, .62], i: [.3, .32, .37] };
+// What light there is away from the lamps is cold: blue in the stone, violet in the cellar, the dusk in the chateau's windows, green in the workshop.
+// The lamps are warm, so every room has two colours in it and the shadows have somewhere to go.
+const AMBIENT = { z: [.44, .5, .78], '.': [.32, .36, .58], m: [.27, .32, .44], r: [.18, .22, .32], c: [.13, .17, .28], b: [.14, .15, .28], w: [.22, .24, .4], k: [.22, .24, .4], g: [.3, .36, .62], o: [.32, .37, .62], i: [.13, .26, .27] };
 const LS = 2, LW = SIZE / LS, LM = new Float32Array(LW * LW * 3), FARM = new Float32Array(LW * LW * 3);            // the light map: one sample every two units
 { const ok = new Uint8Array(LW * LW);
   const kind = (gx, gy) => { const cx = (gx * LS + 1) >> 4, cy = (gy * LS + 1) >> 4; let t = tile(cx, cy); if (t === 'D') t = doorAt(cx, cy).floor; if (t === 'H') t = 'g'; return isFloor(t) ? t : null; };   // (a hedge's top is lit like the lawn it stands on)
@@ -642,8 +644,8 @@ const ENEMY = {
 };
 // Telling the machines apart at a glance: each kind wears its own colour (the automate is plain brass and navy), and the same
 // colour marks its name under the crosshair.
-const KIND = { automate: { name: 'AUTOMATE', col: '#d9b24a' }, lanterne: { name: 'LANTERNE', col: '#ff8a3a' }, scaphandre: { name: 'SCAPHANDRIER', col: '#58c08a', tint: [.72, 1.2, .8] },
-  sauteur: { name: 'SAUTEUR', col: '#ff4a4a', tint: [1.3, .6, .55] }, garde: { name: 'GARDE', col: '#5fa8ff', tint: [.62, .84, 1.35] }, colosse: { name: 'LE COLOSSE', col: '#c8c8d8', tint: [.8, .8, .95] } };
+const KIND = { automate: { name: 'AUTOMATE', col: '#d9b24a' }, lanterne: { name: 'LANTERNE', col: '#ff8a3a' }, scaphandre: { name: 'SCAPHANDRIER', col: '#58c08a', tint: [.92, 1.06, .94] },
+  sauteur: { name: 'SAUTEUR', col: '#ff4a4a', tint: [1.14, .82, .78] }, garde: { name: 'GARDE', col: '#5fa8ff', tint: [.84, .93, 1.14] }, colosse: { name: 'LE COLOSSE', col: '#c8c8d8', tint: [.8, .8, .95] } };
 const KINDS = Object.keys(KIND), kindCols = time => { const out = new Float32Array(36), p = .75 + .25 * Math.sin(time * 26); KINDS.forEach((k, i) => { const c = hex3(KIND[k].col); out.set(c, i * 3); out.set(c.map(v => (v * .4 + .75) * p * 1.5), (i + 6) * 3); }); return out; };   // each kind's outline, and the brighter, beating one it wears while it charges a shot
 const tintOf = name => { const k = KIND[name.slice(0, name.indexOf('_'))]; return k && k.tint; };
 const WEAPONS = [
@@ -805,9 +807,9 @@ function sfx(kind, at) {
   if (d > 420) return;
   snd.play(kind, { vol: 1 / (1 + (d / 70) ** 2), pan: Math.sin(Math.atan2(dy, dx) - P.yaw) * Math.min(1, d / 30) * .85, muffle: Math.min(.85, d / 500 + (canSee(P.x, P.y, at.x, at.y) ? 0 : .5)) });
 }
-const GRADE = { metro: [.97, 1.02, 1.08, 1.1], catacombs: [1.1, .96, .8, 1.2], cellar: [1.12, .93, .8, 1.16], chateau: [1.08, 1, .87, 1.06], courtyard: [.9, .97, 1.17, 1.12], roofs: [.84, .95, 1.2, 1.18], workshop: [.9, 1.05, 1.02, 1.18] }, grade = [1, 1, 1, 1];
+const GRADE = { metro: [.99, 1.01, 1.04, 1.06], catacombs: [1.04, .99, .93, 1.1], cellar: [1.05, .97, .93, 1.08], chateau: [1.03, 1, .95, 1.04], courtyard: [.94, .98, 1.1, 1.08], roofs: [.9, .97, 1.14, 1.1], workshop: [.94, 1.03, 1, 1.1] }, grade = [1, 1, 1, 1];
 // The mist that lies in each place: how thick, how fast it thins with height, how much it takes the lamps' light, and its colour.
-const MIST = { metro: [.0035, .2, .9, .8, .86, 1], catacombs: [.011, .13, 1.1, 1, .74, .5], cellar: [.01, .13, 1.1, 1, .62, .46], chateau: [.0025, .12, .9, 1, .86, .62], courtyard: [.007, .16, .8, .5, .62, .95], roofs: [.008, .1, .7, .5, .58, .8], workshop: [.007, .12, 1, .6, .92, .8] }, mist = [0, .15, 1, 1, 1, 1, 0];
+const MIST = { metro: [.0012, .2, .9, .8, .86, 1], catacombs: [.006, .14, 1.1, 1, .78, .56], cellar: [.0055, .14, 1.1, 1, .66, .5], chateau: [.0012, .12, .9, 1, .86, .62], courtyard: [.004, .16, .8, .5, .62, .95], roofs: [.005, .1, .7, .5, .58, .8], workshop: [.004, .12, 1, .6, .92, .8] }, mist = [0, .15, 1, 1, 1, 1, 0];
 const hex3 = h => [parseInt(h.slice(1, 3), 16) / 255, parseInt(h.slice(3, 5), 16) / 255, parseInt(h.slice(5, 7), 16) / 255];
 const RAIN = LEVEL === 2 ? 1 : 0, storm = { flash: 0, next: 6 };              // it is raining on the roofs, and there is lightning about
 const ROOM_OF = { z: 'roofs', m: 'metro', r: 'metro', c: 'catacombs', b: 'cellar', w: 'chateau', k: 'chateau', g: 'courtyard', o: 'courtyard', i: 'workshop' };
@@ -1433,7 +1435,7 @@ function render(now) {
   for (const e of enemies) if (!e.dead) bodies.push([Math.hypot(e.x - P.x, e.y - P.y), e.x, e.y, e.r * 1.05, e.z + (e.fly || 0) + (RIG[e.type] ? RIG[e.type].H : MODEL_DEFS[e.type + '_i'].H) * VOX]);
   if (R.fast) for (const d of decor) if (!d.gone && d.solid && d.r >= 2) bodies.push([Math.hypot(d.x - P.x, d.y - P.y), d.x, d.y, Math.min(d.r, 6), MODEL_DEFS[d.model].H * (MODEL_DEFS[d.model].o ? MODEL_DEFS[d.model].o.vox : 1)]);   // (with full lighting the furniture casts its true shadow instead)
   bodies.sort((a, b) => a[0] - b[0]);
-  R.end({ lights: ls, bodies: bodies.slice(0, 10).map(b => b.slice(1)), fog: [.04, .035, .05, 120], sky: LEVEL === 2 || 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))), time, dim: (1 + storm.flash * 2.2) * (.25 + .75 * dim) * (P.escape ? .7 + .3 * Math.sin(time * 13) : 1), mist: mist.slice(0, 3).concat(mist[2]).map((v, i) => i === 2 ? mist[6] : v), mistc: mist.slice(3, 6), kinds: kindCols(time), rain: [RAIN, storm.flash, 0], smoke: smokeBuf, smokeCount: ns, grade: (g => { for (let i = 0; i < 4; i++) grade[i] += (g[i] - grade[i]) * .04; return grade; })(P.escape ? [1.25, .92, .85, 1.15] : GRADE[ROOM_OF[tile(Math.floor(P.x / CS), Math.floor(P.y / CS))]] || [1, 1, 1, 1]) });
+  R.end({ lights: ls, bodies: bodies.slice(0, 10).map(b => b.slice(1)), fog: [.04, .035, .05, 120], sky: LEVEL === 2 || 'go'.includes(tile(Math.floor(P.x / CS), Math.floor(P.y / CS))), time, dim: (1 + storm.flash * 2.2) * (.25 + .75 * dim) * (P.escape ? .7 + .3 * Math.sin(time * 13) : 1), mist: mist.slice(0, 3).concat(mist[2]).map((v, i) => i === 2 ? mist[6] : v), mistc: mist.slice(3, 6), kinds: kindCols(time), rain: [RAIN * (rainK += ((tile(Math.floor(P.x / CS), Math.floor(P.y / CS)) === 'i' ? 0 : 1) - rainK) * .08), storm.flash, 0], smoke: smokeBuf, smokeCount: ns, grade: (g => { for (let i = 0; i < 4; i++) grade[i] += (g[i] - grade[i]) * .04; return grade; })(P.escape ? [1.25, .92, .85, 1.15] : GRADE[ROOM_OF[tile(Math.floor(P.x / CS), Math.floor(P.y / CS))]] || [1, 1, 1, 1]) });
   if (own) Object.assign(P, own);
   if (P.escape) $('cap').textContent = `ÉVACUEZ · 0:${String(Math.max(0, Math.ceil(P.escape))).padStart(2, '0')}`; else if (state !== 'intro' && $('cap').textContent) $('cap').textContent = '';
   $('stats').textContent = `${n} draws, ${Math.round(R.stats.tris / 1000)}k triangles.`;
@@ -1494,6 +1496,7 @@ scene.addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('mousemove', e => { if (document.pointerLockElement === scene && state === 'play') { P.yaw += e.movementX * 0.0026; P.pitch = Math.max(-.85, Math.min(.85, P.pitch - e.movementY * 0.0026)); } });
 document.addEventListener('pointerlockchange', () => { if (document.pointerLockElement !== scene && state === 'play' && matchMedia('(pointer:fine)').matches) { state = 'pause'; showScreen(); keys.fire = false; } });
 addEventListener('keydown', e => {
+  if (e.key === '`') { document.body.classList.toggle('debug'); return; }                                  // the frame counters, for whoever is working on the game
   const k = e.key.toLowerCase();
   if (state === 'intro' && (k === ' ' || k === 'enter' || k === 'escape')) return endIntro();
   if (k === 'r' && !e.repeat && (state === 'dead' || state === 'won')) { reset(); state = 'play'; showScreen(); return; }   // R restarts once it is over; in a fight it reloads
@@ -1513,6 +1516,7 @@ document.querySelectorAll('#touch button').forEach(b => {
 });
 const warm = Object.keys(MODEL_DEFS).filter(n => /^(automate|scaphandre|colosse|lanterne|sauteur|garde|a_|w_)/.test(n));
 let last = performance.now(), frames = 0, since = last, spent = 0, slow = 0;
+let rainK = 1;                                                              // no rain falls between you and the far wall while you stand under the mooring house roof
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000), t0 = performance.now(); last = now;
   if (state === 'intro') runIntro(dt); else if (freeze > 0) freeze -= dt; else if (state === 'play') update(dt);

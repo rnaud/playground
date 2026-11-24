@@ -66,7 +66,7 @@ float lum(vec2 uv) { return dot(tx(uv).rgb, vec3(0.3, 0.59, 0.11)); }
 void main() {
   vec4 cell = texelFetch(u_cells, ivec2(v_w / 16.0), 0); float code = floor((u_up > 0.0 ? cell.b : cell.a) * 255.0 + 0.5); if (code > 254.0 || floor(code / 32.0) != u_level) discard; layer = mod(code, 32.0);   // each cell names its picture (or none) and which level it lies on
   vec2 uv = v_w / TILE; gx = dFdx(uv); gy = dFdy(uv);
-  vec3 D = normalize(vec3(v_w, u_height) - vec3(u_eye.xy, u_eye.w)); float deep = 0.55, steps = 10.0, dz = max(abs(D.z), 0.22);
+  vec3 D = normalize(vec3(v_w, u_height) - vec3(u_eye.xy, u_eye.w)); float deep = 0.32, steps = 10.0, dz = max(abs(D.z), 0.22);
   vec2 stp = D.xy / dz * (deep / steps) / TILE; float d = 0.0;
   for (int i = 0; i < 10; i++) { vec2 q = uv + stp; if (d + deep / steps > (1.0 - lum(q)) * deep) break; uv = q; d += deep / steps; }
   vec4 t = tx(uv);
@@ -123,9 +123,9 @@ vec3 skyAt(vec2 uv) {                                                 // dusk ov
   return sky;
 }
 vec3 edged(vec3 c, float z, float a) {                               // a machine is drawn round in its own colour: any pixel that is not machine but has machine beside and in front of it
-  if (a > 0.043 && a < 0.143) return c; float f = z >= 1.0 ? 1e9 : fwdOf(z);
-  for (int i = 0; i < 4; i++) { vec2 uv = v + vec2(i < 2 ? (i == 0 ? 1.0 : -1.0) : 0.0, i < 2 ? 0.0 : (i == 2 ? 1.0 : -1.0)) * u_px * 1.6; float m = texture(u_a, uv).a;
-    if (m > 0.043 && m < 0.143 && fwdOf(texture(u_d, uv).r) < f - 1.0) return mix(c, u_kind[int(clamp(floor((m * 255.0 - 11.0) / 2.0), 0.0, 11.0))], 0.88); }
+  if (a > 0.043 && a < 0.143) return c; float f = z >= 1.0 ? 1e9 : fwdOf(z), w = max(1.6, 0.0022 / u_px.x);
+  for (int i = 0; i < 4; i++) { vec2 uv = v + vec2(i < 2 ? (i == 0 ? 1.0 : -1.0) : 0.0, i < 2 ? 0.0 : (i == 2 ? 1.0 : -1.0)) * u_px * w; float m = texture(u_a, uv).a;
+    if (m > 0.043 && m < 0.143 && fwdOf(texture(u_d, uv).r) < f - 1.0) { int id = int(clamp(floor((m * 255.0 - 11.0) / 2.0), 0.0, 11.0)); return mix(c, u_kind[id], id > 5 ? 0.9 : 0.55); } }   // a quiet line as a rule, a loud one while it charges
   return c;
 }
 void main() {
@@ -157,19 +157,27 @@ void main() {
     diff += lc * ndl * k; spec += lc * pow(max(dot(n, normalize(ld + V)), 0.0), 48.0) * k;
   }
   vec3 amb = texture(u_lm, P.xy / u_world).rgb * u_dim;                 // (the baked light dims when the lamps go out)
-  vec3 c = A.rgb * (amb * ao + (diff + max(farl, 0.0) * u_dim) * mix(1.0, ao, 0.5)) + spec * N.a * 0.9;
+  float roof = n.z < -0.5 ? 0.5 : 1.0, cs = 1.0;                        // a ceiling is above its lamps and gets the least of them
+  if (n.z > 0.6) { float occ = 0.0;                                     // and a floor is dark where something stands on it: furniture from the height map, machines from their places
+    for (int i = 0; i < 8; i++) { float a = float(i) * 0.785 + 0.39; vec2 h = texelFetch(u_things, ivec2(P.xy + vec2(cos(a), sin(a)) * (i % 2 == 0 ? 2.0 : 4.2)), 0).rg * 32.0; occ += step(P.z + 1.0, h.r) * step(h.g, P.z + 3.0); }
+    cs = 1.0 - 0.45 * occ / 8.0;
+    for (int i = 0; i < ${MAXO}; i++) { if (i >= u_no) break; vec4 b = u_occ[i]; if (P.z < b.w) cs *= 1.0 - 0.42 * (1.0 - smoothstep(b.z * 0.35, b.z * 1.5, length(P.xy - b.xy))); } }
+  bool mach = A.a > 0.043 && A.a < 0.143;
+  vec3 c = A.rgb * (amb * ao * roof * cs + (diff * mix(1.0, roof, 0.6) + max(farl, 0.0) * u_dim * roof) * mix(1.0, ao, 0.5) * mix(1.0, cs, 0.7)) + spec * N.a * 0.9;
+  if (mach) c += A.rgb * 0.035 + u_kind[int(clamp(floor((A.a * 255.0 - 11.0) / 2.0), 0.0, 5.0))] * pow(clamp(1.0 - dot(n, V), 0.0, 1.0), 2.5) * 0.4;   // a machine is lit by the room like anything else, with an edge of its own colour to pick it out
   if (u_fast < 0.5 && N.a > 0.3 && n.z > 0.6) {                                        // polished floors mirror the room: follow the reflected ray across the last frame until it meets something
     vec3 Rr = reflect(D, normalize(mix(vec3(0.0, 0.0, 1.0), n, 0.35) + vec3(wob, 0.0))); float hit = 0.0; vec2 huv = v;
     for (int i = 1; i <= 10; i++) { vec3 sp = screenOf(P + Rr * (float(i) + jit) * 3.4); if (sp.z < u_proj.z || sp.x < 0.0 || sp.x > 1.0 || sp.y < 0.0 || sp.y > 1.0) break;
       float sf = fwdOf(texture(u_d, sp.xy).r); if (sf < sp.z - 0.6 && sf > sp.z - 9.0) { hit = 1.0; huv = sp.xy; break; } }
     float edge = min(min(huv.x, 1.0 - huv.x), min(huv.y, 1.0 - huv.y));
-    c += texture(u_prev, huv).rgb * hit * N.a * (0.12 + 0.6 * pow(1.0 - max(dot(V, n), 0.0), 3.0)) * smoothstep(0.0, 0.08, edge);
+    c += texture(u_prev, huv).rgb * hit * N.a * (0.12 + 0.6 * pow(clamp(1.0 - dot(V, n), 0.0, 1.0), 3.0)) * smoothstep(0.0, 0.08, edge);
   }
-  c = mix(c, A.rgb * 2.4, A.a);                                        // glowing voxels ignore the light and feed the bloom
+  c = mix(c, A.rgb * 2.4, mach ? 0.0 : A.a);                            // glowing voxels ignore the light and feed the bloom
   c = mix(c, u_fog.rgb, clamp((T - u_fog.a) / (u_far - u_fog.a), 0.0, 1.0) * 0.85);
   { float zo = max(O.z - u_mist.z, -3.0), zp = max(P.z - u_mist.z, -3.0), dz = zp - zo, eo = exp(-u_mist.y * zo);     // mist lying on the floor: thick at your feet, gone by head height, and lit by whatever lamps stand in it
     float od = u_mist.x * T * (abs(dz) < 0.05 ? eo : (eo - exp(-u_mist.y * zp)) / (u_mist.y * dz));
     c = mix(c, u_mistc * (0.1 + u_mist.w * (amb + max(farl, 0.0) * 0.5 + diff * 0.25)), 1.0 - exp(-od)); }
+  if (any(isnan(c)) || any(isinf(c))) c = vec3(0.0);
   o = vec4(edged(c + glow + rainAt(v, T) * vec3(0.5, 0.56, 0.68) * 0.3 * u_rain.x * (1.0 + u_rain.y * 2.0), z, A.a), 1.0);
 }`);
   const smokeP = prog(CAM + `layout(location = 0) in vec2 a_q; layout(location = 1) in vec4 i_p; layout(location = 2) in vec4 i_c; out vec2 v_q; out vec4 v_c; out float v_f;
@@ -182,14 +190,15 @@ void main() { vec3 c = vec3(0.0); for (int i = 0; i < 4; i++) c += texture(u_tex
   // exposure: one pixel that drifts towards whatever makes the average of the frame a comfortable brightness
   const exposeP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex, u_old;
 void main() { float l = dot(textureLod(u_tex, vec2(0.5), 20.0).rgb, vec3(0.3, 0.59, 0.11)), want = clamp(0.36 / (l + 0.04), 0.85, 1.35), old = texture(u_old, vec2(0.5)).r; o = vec4(old < 0.01 ? want : mix(old, want, 0.012)); }`);
-  const finalP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex, u_b0, u_b1, u_b2, u_b3, u_exp; uniform float u_time, u_pain; uniform vec4 u_grade;   // grade: tint r, g, b and contrast
+  const finalP = prog(FULL, `in vec2 v; out vec4 o; uniform sampler2D u_tex, u_b0, u_b1, u_b2, u_b3, u_exp; uniform float u_time, u_pain; uniform vec4 u_grade; uniform vec2 u_px;   // grade: tint r, g, b and contrast
 void main() {
-  vec3 c = texture(u_tex, v).rgb + texture(u_b0, v).rgb * 0.5 + texture(u_b1, v).rgb * 0.5 + texture(u_b2, v).rgb * 0.45 + texture(u_b3, v).rgb * 0.4;
-  c *= texture(u_exp, vec2(0.5)).r;
-  c = mix(c, 0.8 + (1.0 - exp(-(c - 0.8) * 2.2)) * 0.22, step(0.8, c));   // roll the highlights off instead of clipping them
+  vec3 s0 = texture(u_tex, v).rgb, nb = (texture(u_tex, v + vec2(u_px.x, 0.0)).rgb + texture(u_tex, v - vec2(u_px.x, 0.0)).rgb + texture(u_tex, v + vec2(0.0, u_px.y)).rgb + texture(u_tex, v - vec2(0.0, u_px.y)).rgb) * 0.25;
+  vec3 c = max(s0 + clamp(s0 - nb, -s0 * 0.22 - 0.002, s0 * 0.22 + 0.002) * 0.6, 0.0) + texture(u_b0, v).rgb * 0.3 + texture(u_b1, v).rgb * 0.28 + texture(u_b2, v).rgb * 0.26 + texture(u_b3, v).rgb * 0.24;   // the edges the smoothing took are put back; the bloom is a veil, not a fog
+  c *= texture(u_exp, vec2(0.5)).r * 0.82;
+  c = clamp(c * (2.51 * c + 0.03) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);   // a film curve: a toe that keeps the blacks black and a shoulder that rolls the lamps off
   float lum = dot(c, vec3(0.3, 0.59, 0.11));
-  c = mix(c * vec3(0.82, 0.98, 1.16), c * vec3(1.08, 1.0, 0.9), smoothstep(0.06, 0.55, lum));   // cold in the shadows, warm in the light
-  c = mix(vec3(lum), c, 1.14);
+  c = mix(c * vec3(0.9, 0.99, 1.1), c * vec3(1.04, 1.0, 0.95), smoothstep(0.06, 0.55, lum));   // cold in the shadows, warm in the light
+  c = mix(vec3(lum), c, 1.1);
   c = (c - 0.5) * u_grade.a + 0.5; c *= u_grade.rgb;                     // each part of the level has its own grade
   vec2 q = v - 0.5; c *= 1.0 - dot(q, q) * 0.9;                         // vignette
   c += (fract(sin(dot(v * 913.0 + u_time, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) * (0.014 + 0.03 * (1.0 - smoothstep(0.0, 0.45, lum)));   // grain, coarser in the dark
@@ -209,7 +218,8 @@ void main() {
   vec3 c0 = texture(u_cur, v).rgb, mn = c0, mx = c0;
   for (int i = 0; i < 8; i++) { int k = i < 4 ? i : i + 1; vec3 q = texture(u_cur, v + (vec2(float(k % 3), float(k / 3)) - 1.0) * u_texel).rgb; mn = min(mn, q); mx = max(mx, q); }
   float keep = u_keep * step(0.0, puv.x) * step(puv.x, 1.0) * step(0.0, puv.y) * step(puv.y, 1.0);
-  o = vec4(mix(c0, clamp(textureLod(u_hist, puv, 0.0).rgb, mn, mx), keep), 1.0);
+  vec3 h = clamp(textureLod(u_hist, puv, 0.0).rgb, mn, mx); if (any(isnan(h)) || any(isinf(h))) h = c0;   // one bad pixel must not live for ever in the history
+  o = vec4(mix(c0, h, keep), 1.0);
 }`);
 
   // ---- targets ----
@@ -309,7 +319,7 @@ void main() {
       gl.useProgram(downP.p);                                        // bloom: keep what is brighter than white, and blur it at five scales
       bloom.forEach((b, i) => { gl.bindFramebuffer(gl.FRAMEBUFFER, b.f); gl.viewport(0, 0, b.w, b.h); bind(0, i ? bloom[i - 1].t : lit, downP.u.u_tex); gl.uniform2f(downP.u.u_texel, 1 / (i ? bloom[i - 1].w : W), 1 / (i ? bloom[i - 1].h : H)); gl.uniform1f(downP.u.u_cut, i ? 0 : 1); full(); });
       gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.viewport(0, 0, canvas.width, canvas.height);
-      const f = finalP.u, g = o.grade || [1, 1, 1, 1]; gl.useProgram(finalP.p); bind(0, lit, f.u_tex); bind(1, bloom[1].t, f.u_b0); bind(2, bloom[2].t, f.u_b1); bind(3, bloom[3].t, f.u_b2); bind(4, bloom[4].t, f.u_b3); bind(5, ex.t, f.u_exp);
+      const f = finalP.u, g = o.grade || [1, 1, 1, 1]; gl.useProgram(finalP.p); bind(0, lit, f.u_tex); bind(1, bloom[1].t, f.u_b0); bind(2, bloom[2].t, f.u_b1); bind(3, bloom[3].t, f.u_b2); bind(4, bloom[4].t, f.u_b3); bind(5, ex.t, f.u_exp); gl.uniform2f(f.u_px, 1 / W, 1 / H);
       gl.uniform1f(f.u_time, o.time % 10); gl.uniform1f(f.u_pain, o.pain || 0); gl.uniform4f(f.u_grade, g[0], g[1], g[2], g[3]);
       full();
       flip = 1 - flip;
