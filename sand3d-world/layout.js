@@ -1,33 +1,37 @@
 // Where the 100 objects go. Metres; x runs east, z runs south; rot is degrees about the vertical.
-// `on` sets a piece on top of another by its name (dx, dz in the support's own axes).
+// `on` sets a piece on top of another by its name: dx, dz and rot are then in the support's own
+// frame (a support turned 90 has its own x running north, its own z running east).
 // The house is 14 × 10 m at the origin: living room (north-west), kitchen (north-east),
 // bedroom (south-west), bathroom (south, middle), hall and study (south-east, front door).
 
 export const PLACE = [
   // living room
-  { id: 'sofa', x: -3.9, z: -1.6, rot: 90 },
-  { id: 'coffee_table', x: -2.5, z: -1.6, rot: 90 },
-  { id: 'armchair', x: -2.4, z: -3.4, rot: 180 },
-  { id: 'sideboard', x: -0.42, z: 0.0, rot: -90 },
-  { id: 'tv', on: 'sideboard', rot: -90 },
+  // (the sofa faces the television on the west wall across the coffee table, the armchair looks on
+  // from the north; the way from the kitchen to the bedroom door runs behind the sofa)
+  { id: 'sofa', x: -3.3, z: -0.9, rot: -90 },
+  { id: 'coffee_table', x: -4.8, z: -0.9, rot: 90 },
+  { id: 'armchair', x: -4.5, z: -2.3, rot: 180 },
+  { id: 'sideboard', x: -6.72, z: -0.7, rot: 90 },
+  { id: 'tv', on: 'sideboard', dx: 0.15, rot: 0 },
   { id: 'piano', x: -2.65, z: -4.55, rot: 0 },
-  { id: 'bookshelf', x: -6.62, z: 0.1, rot: 90 },
+  { id: 'bookshelf', x: -0.37, z: 0.05, rot: -90 },
   { id: 'floor_lamp', x: -6.4, z: -4.4 },
-  { id: 'cabinet', x: -1.9, z: 0.62, rot: 0 },
-  { id: 'monstera', x: -6.4, z: -0.95 },
+  { id: 'monstera', x: -6.4, z: 0.5 },
   { id: 'ceiling_fan', x: -3.5, z: -2.0 },
   { id: 'beanbag', x: -5.7, z: -3.0, rot: 40 },
   // kitchen
+  // (north wall, west to east: laundry tower, cabinet, sink unit under the window, cooker, fridge)
   { id: 'kitchenette', x: 3.3, z: -4.5, rot: 90 },
-  { id: 'microwave', on: 'kitchenette', dx: -0.55, rot: 0 },
-  { id: 'kettle', on: 'kitchenette', dx: 0.55, rot: 0 },
+  { id: 'kettle', on: 'kitchenette', dz: 0.05, rot: -90 },
+  { id: 'toaster', on: 'kitchenette', dz: 0.42, rot: -90 },
+  { id: 'cabinet', x: 1.6, z: -4.48, rot: 180 },
+  { id: 'microwave', on: 'cabinet', dx: 0.18, dz: 0.1, rot: 180 },
+  { id: 'blender', on: 'cabinet', dx: -0.3, dz: 0.05, rot: 180 },
   { id: 'cooker', x: 5.1, z: -4.55, rot: 0 },
   { id: 'stockpot', on: 'cooker', dx: -0.14, dz: -0.05 },
   { id: 'pan', on: 'cooker', dx: 0.16, dz: 0.1, rot: 30 },
   { id: 'fridge', x: 6.45, z: -4.45, rot: 0 },
-  { id: 'dryer', x: 0.6, z: -4.5, rot: 0 },
-  { id: 'toaster', on: 'dryer', dx: -0.12, rot: 0 },
-  { id: 'blender', on: 'dryer', dx: 0.2 },
+  { id: 'dryer', x: 0.5, z: -4.52, rot: 0 },
   { id: 'dining_table', x: 3.5, z: -1.5, rot: 0 },
   { id: 'chair', name: 'chair_a', x: 3.0, z: -2.35, rot: 0 },
   { id: 'chair', name: 'chair_b', x: 4.0, z: -2.35, rot: 0 },
@@ -39,17 +43,17 @@ export const PLACE = [
   { id: 'teacup', on: 'dining_table', dx: 0.38, dz: 0.22 },
   { id: 'calathea', on: 'dining_table', dx: -0.1, dz: 0.28 },
   { id: 'peace_lily', x: 6.5, z: 0.45 },
-  { id: 'bar_stool', name: 'stool_a', x: 2.75, z: -3.75 },
-  { id: 'bar_stool', name: 'stool_b', x: 3.85, z: -3.75 },
+  { id: 'bar_stool', name: 'stool_a', x: 6.5, z: -3.0 },
+  { id: 'bar_stool', name: 'stool_b', x: 6.5, z: -1.8 },
   { id: 'hutch', x: 1.7, z: 0.6, rot: 180 },
   // bedroom
   { id: 'bed', x: -5.55, z: 4.05, rot: 0 },
-  { id: 'nightstand', x: -6.6, z: 2.45, rot: 90 },
+  { id: 'nightstand', x: -4.28, z: 4.62, rot: 180 },
   { id: 'table_lamp', on: 'nightstand' },
   { id: 'wardrobe', x: -1.6, z: 3.55, rot: -90 },
   { id: 'drawers', x: -2.5, z: 1.5, rot: 0 },
   { id: 'rubber_plant', x: -6.6, z: 1.45 },
-  { id: 'rocker', x: -2.4, z: 4.2, rot: -135 },
+  { id: 'rocker', x: -6.1, z: 2.7, rot: 70 },
   // bathroom
   { id: 'bathtub', x: 0.75, z: 4.45, rot: 90 },
   { id: 'toilet', x: -0.55, z: 2.3, rot: 90 },
@@ -76,7 +80,7 @@ export const PLACE = [
   { id: 'flagpole', x: 8.2, z: 10.5 },
   { id: 'well', x: 12.5, z: -3 },
   { id: 'wheelbarrow', x: 9.6, z: -6.6, rot: 40 },
-  { id: 'pergola', x: -11.5, z: 0.5, rot: 90 },
+  { id: 'pergola', x: -13.2, z: 1.6, rot: 90 },
   { id: 'tree_bench', x: -10, z: -10 },
   { id: 'gazebo', x: -13, z: 24, rot: 20 },
   { id: 'gate', x: 6.35, z: 20, rot: 0 },
@@ -92,11 +96,11 @@ export const PLACE = [
   { id: 'magnolia', x: 13.5, z: 3.5, rot: 120 },
   { id: 'mulberry', x: -12.5, z: 9.5, rot: 200 },
   { id: 'firethorn', x: -8.6, z: 5.6, rot: 30 },
-  { id: 'carnation', on: 'sideboard', dx: 0.55 },
+  { id: 'carnation', on: 'sideboard', dx: -0.68 },
 ];
 
 // Many copies, spread by rule: n of them in a zone, `near` > 1 gathers them toward the middle,
-// `trunk` is the radius the walker cannot pass, `shadow: false` for small plants.
+// `trunk` (any value) makes them solid where their own shape is, `shadow: false` for small plants.
 export const SCATTER = [
   { id: 'rowan', n: 3, zone: 'garden', seed: 11, min: 11, trunk: 0.25, gap: 4 },
   { id: 'mulberry', n: 2, zone: 'forest', seed: 12, min: 26, reach: 60, trunk: 0.5, gap: 9 },

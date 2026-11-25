@@ -41,8 +41,18 @@ at 1500 x 1125; it has not been measured on anything slower.
 What keeps it quick: the scene is drawn once and ambient occlusion reads that pass's depth;
 sun shadows are redrawn only when the walker moves 8 m on or something outdoors changes;
 trees and rocks are separate objects, so those out of view are skipped; the crosshair is
-tested against a box round each object, not its triangles; and from indoors only 40% of the
-grass is drawn.
+tested against a coarse grid of each object, not its triangles; and from indoors only 40% of
+the grass is drawn.
+
+That grid (cells of 4 cm for furniture, up to 30 cm for the largest rocks) records where each
+object's surfaces are. The walker is stopped by the cells an object fills between shin and
+shoulder, so a tree blocks at its trunk and an umbrella at its pole, not across its whole
+box; the crosshair names what its ray actually meets, and not through the walls; and a piece
+set `on` another rests on the surface under it (the worktop, not the top of the tap).
+
+Parts that a program lays flush on one another (a worktop on its carcass, tea in a cup) are
+each swollen by a different hair's breadth, at most 0.4 mm, so that coplanar faces do not
+flicker.
 
 Jointed objects open with E: the cabinet, the chest of drawers, the dryer, the garden gate;
 the ceiling fan and the wind turbine spin.

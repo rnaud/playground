@@ -121,7 +121,8 @@ const outdoors = new THREE.Group(), indoors = new THREE.Group();     // what the
 scene.add(outdoors, indoors);
 const lamps = [];
 let lampsStale = 0;
-const colliders = [];            // {x0, x1, z0, z1} boxes and {x, z, r} posts the walker cannot enter
+const colliders = [];            // what the walker cannot enter: {x0, x1, z0, z1} walls, and objects by the cells they fill
+const walls = [];                // the house shell: the crosshair does not name things through it
 
 function makeTerrain() {
   const size = 320, seg = 256;
@@ -258,8 +259,9 @@ function makeHouse() {
     box(b - a - T, 0.09, 0.016, (a + b) / 2, floor, c + i, skirting, false); box(b - a - T, 0.09, 0.016, (a + b) / 2, floor, d - i, skirting, false);
     box(0.016, 0.09, d - c - T, a + i, floor, (c + d) / 2, skirting, false); box(0.016, 0.09, d - c - T, b - i, floor, (c + d) / 2, skirting, false);
   }
-  box(x1 - x0 + 0.7, 0.34, z1 - z0 + 0.7, 0, -0.34, 0, plain('#8f8a80', 'stone', { roughness: 0.9 }), false);
-  box(1.5, 0.12, 0.9, 4.75, -0.12, z1 + 0.8, plain('#8f8a80', 'stone', { roughness: 0.9 }), false);
+  // (the plinth and the step stand a little proud of the lawn: level with it, the two flicker)
+  box(x1 - x0 + 0.7, 0.37, z1 - z0 + 0.7, 0, -0.34, 0, plain('#8f8a80', 'stone', { roughness: 0.9 }), false);
+  box(1.5, 0.18, 0.9, 4.75, -0.12, z1 + 0.8, plain('#8f8a80', 'stone', { roughness: 0.9 }), false);
   // The front door, standing open.
   const leaf = new THREE.Mesh(new THREE.BoxGeometry(1.04, 2.02, 0.045), plain('#3f5e52', 'wood', { roughness: 0.5 }));
   leaf.geometry.translate(0.52, 1.01, 0);
@@ -308,6 +310,8 @@ function makeHouse() {
     fitting.castShadow = false;
     house.add(fitting);
   }
+  house.updateMatrixWorld(true);
+  house.traverse((o) => { if (o.isMesh && o.material !== glass) walls.push(o); });
   scene.add(house);
 }
 
@@ -332,6 +336,7 @@ function flattened(mesh) {
     for (let i = 0; i < color.length; i += 3) { color[i] = c.r; color[i + 1] = c.g; color[i + 2] = c.b; }
     g.setAttribute('color', new THREE.BufferAttribute(color, 3));
   }
+  if (!g.attributes.normal) g.computeVertexNormals();
   for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'color'].includes(name)) g.deleteAttribute(name);
   return g;
 }
@@ -348,14 +353,78 @@ function fitting(box, item) {
   return m;
 }
 
+// Many programs lay one part flush on another (a worktop on its carcass, tea in a cup), and two
+// faces in one plane flicker. Each part is swollen along its normals by a different hair's breadth,
+// at most 0.4 mm, so that one of the two always wins.
+const HAIR = 0.000035;
+function swell(geometry, by) {
+  const p = geometry.attributes.position, n = geometry.attributes.normal;
+  if (!n || !by) return;
+  for (let i = 0; i < p.array.length; i++) p.array[i] += n.array[i] * by;
+  p.needsUpdate = true;
+}
+
+// A coarse grid of the cells an object's surfaces pass through: 1 where there is any surface,
+// 2 where it is not foliage, and how high the surface reaches in each column. The walker and the
+// crosshair are tested against it, not against the object's whole box (a tree stops you at its
+// trunk, a table lets you look under it), and what is set on an object rests on the surface at
+// that spot, not on its highest point.
+function gridOf(box) {
+  const size = box.getSize(new THREE.Vector3()), cell = Math.max(0.04, Math.max(size.x, size.y, size.z) / 96);
+  const nx = Math.floor(size.x / cell) + 1, ny = Math.floor(size.y / cell) + 1, nz = Math.floor(size.z / cell) + 1;
+  return { min: box.min.clone(), cell, nx, ny, nz, data: new Uint8Array(nx * ny * nz), top: new Float32Array(nx * nz).fill(-Infinity), plans: new Map() };
+}
+function mark(grid, geometry, matrix, bits) {
+  const p = geometry.attributes.position, index = geometry.index, count = index ? index.count : p.count;
+  const { min, cell, nx, ny, nz, data, top } = grid, v = new Float32Array(9), t = new THREE.Vector3();
+  for (let i = 0; i < count; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      t.fromBufferAttribute(p, index ? index.getX(i + k) : i + k);
+      if (matrix) t.applyMatrix4(matrix);
+      v[k * 3] = (t.x - min.x) / cell; v[k * 3 + 1] = (t.y - min.y) / cell; v[k * 3 + 2] = (t.z - min.z) / cell;
+    }
+    const span = Math.max(Math.abs(v[3] - v[0]), Math.abs(v[4] - v[1]), Math.abs(v[5] - v[2]), Math.abs(v[6] - v[0]), Math.abs(v[7] - v[1]), Math.abs(v[8] - v[2]), Math.abs(v[6] - v[3]), Math.abs(v[7] - v[4]), Math.abs(v[8] - v[5]));
+    const steps = Math.min(400, Math.ceil(span * 1.5) || 1);
+    for (let a = 0; a <= steps; a++) for (let b = 0; a + b <= steps; b++) {
+      const u = a / steps, w = b / steps, r = 1 - u - w;
+      const y = v[1] * r + v[4] * u + v[7] * w, ix = Math.floor(v[0] * r + v[3] * u + v[6] * w), iy = Math.floor(y), iz = Math.floor(v[2] * r + v[5] * u + v[8] * w);
+      if (ix < 0 || iy < 0 || iz < 0 || ix >= nx || iy >= ny || iz >= nz) continue;
+      data[(iy * nz + iz) * nx + ix] |= bits;
+      if (y * cell + min.y > top[iz * nx + ix]) top[iz * nx + ix] = y * cell + min.y;
+    }
+  }
+}
+// The cells of a grid that hold something solid between two heights: what a walker of that height meets.
+function planOf(grid, lo, hi) {
+  const { min, cell, nx, ny, nz, data } = grid;
+  const a = Math.max(0, Math.floor((lo - min.y) / cell)), b = Math.min(ny - 1, Math.floor((hi - min.y) / cell)), key = `${a}:${b}`;
+  if (grid.plans.has(key)) return grid.plans.get(key);
+  let plan = null;
+  for (let iy = a; iy <= b; iy++) for (let i = 0, at = iy * nz * nx; i < nz * nx; i++) if (data[at + i] & 2) (plan ||= new Uint8Array(nx * nz))[i] = 1;
+  grid.plans.set(key, plan);
+  return plan;
+}
+// How high an object's surface stands near a spot of its own floor plan (a hand's width around it).
+function surfaceAt(grid, x, z) {
+  const { min, cell, nx, nz, top } = grid, i = Math.floor((x - min.x) / cell), j = Math.floor((z - min.z) / cell);
+  let y = -Infinity;
+  for (let b = Math.max(0, j - 1); b <= Math.min(nz - 1, j + 1); b++) for (let a = Math.max(0, i - 1); a <= Math.min(nx - 1, i + 1); a++) y = Math.max(y, top[b * nx + a]);
+  return y;
+}
+const foliage = (key) => key.startsWith('leaf|');
+
 function template(built, item) {
   const { root } = built;
   root.updateMatrixWorld(true);
   const names = item.drop || [];
   if (item.live) {                                   // keeps its parts and joints, to be opened
+    const swollen = new Set();
+    let ordinal = 0;
     root.traverse((o) => {
       if (!o.isMesh) return;
       if (names.length && dropped(o, names)) { o.visible = false; return; }
+      ordinal += 1;
+      if (!swollen.has(o.geometry)) { swollen.add(o.geometry); o.userData.swell = ordinal % 12; }
       if (!o.geometry.attributes.color) {
         const c = o.material.color, color = new Float32Array(o.geometry.attributes.position.count * 3);
         for (let i = 0; i < color.length; i += 3) { color[i] = c.r; color[i + 1] = c.g; color[i + 2] = c.b; }
@@ -364,6 +433,7 @@ function template(built, item) {
       o.material = lookMaterial(lookKey(o.material, item.indoors, 0.001));       // these parts are still in millimetres
     });
     const fit = fitting(new THREE.Box3().setFromObject(root), item);
+    root.traverse((o) => { if (o.userData.swell) swell(o.geometry, o.userData.swell * HAIR / (fit.getMaxScaleOnAxis() * o.matrixWorld.getMaxScaleOnAxis())); });
     const holder = new THREE.Group();
     holder.matrixAutoUpdate = false;
     holder.matrix.copy(fit);
@@ -371,15 +441,19 @@ function template(built, item) {
     const group = new THREE.Group();
     group.add(holder);
     group.updateMatrixWorld(true);
-    const size = new THREE.Box3().setFromObject(group).getSize(new THREE.Vector3());
-    return { live: group, joints: built.joints, pose: built.pose, size, triangles: built.stats.triangles };
+    const bounds = new THREE.Box3().setFromObject(group), grid = gridOf(bounds);
+    group.traverse((o) => { if (o.isMesh && o.visible) mark(grid, o.geometry, o.matrixWorld, 3); });
+    return { live: group, joints: built.joints, pose: built.pose, size: bounds.getSize(new THREE.Vector3()), grid, triangles: built.stats.triangles };
   }
   const byClass = new Map();
+  let ordinal = 0;
   root.traverse((o) => {
     if (!o.isMesh || (names.length && dropped(o, names))) return;
     const key = lookKey(o.material, item.indoors);
     if (!byClass.has(key)) byClass.set(key, []);
-    byClass.get(key).push(flattened(o));
+    const g = flattened(o);
+    g.userData.swell = (ordinal += 1) % 12;
+    byClass.get(key).push(g);
   });
   const box = new THREE.Box3();
   for (const list of byClass.values()) for (const g of list) { g.computeBoundingBox(); box.union(g.boundingBox); }
@@ -387,6 +461,7 @@ function template(built, item) {
   const parts = [];
   let triangles = 0;
   for (const [key, list] of byClass) {
+    for (const g of list) swell(g, g.userData.swell * HAIR / fit.getMaxScaleOnAxis());
     const merged = mergeGeometries(list, false);
     list.forEach((g) => g.dispose());
     if (!merged) continue;
@@ -394,39 +469,41 @@ function template(built, item) {
     merged.computeBoundingBox();
     merged.computeBoundingSphere();
     triangles += merged.attributes.position.count / 3;
-    parts.push({ geometry: merged, material: lookMaterial(key) });
+    parts.push({ geometry: merged, material: lookMaterial(key), foliage: foliage(key) });
   }
   const out = new THREE.Box3();
   for (const p of parts) out.union(p.geometry.boundingBox);
+  const grid = gridOf(out);
+  for (const p of parts) mark(grid, p.geometry, null, p.foliage ? 1 : 3);
   built.root.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
-  return { parts, size: out.getSize(new THREE.Vector3()), triangles };
+  return { parts, size: out.getSize(new THREE.Vector3()), grid, leafy: parts.some((p) => p.foliage), triangles };
 }
 
 // ---------------------------------------------------------------- putting templates into the world
 const things = new Map();          // id → { item, tpl }
-const picks = [];                  // a plain box round each placed object: what the crosshair is tested against
-function proxy(item, holder, size, x, y, z, rotDegrees, s = 1) {
-  const box = new THREE.Mesh(new THREE.BoxGeometry(Math.max(size.x * s, 0.08), Math.max(size.y * s, 0.08), Math.max(size.z * s, 0.08)));
-  box.position.set(x, y + size.y * s / 2, z);
-  box.rotation.y = THREE.MathUtils.degToRad(rotDegrees);
-  box.updateMatrixWorld(true);
-  box.userData = { item, holder };
-  picks.push(box);
+const picks = [];                  // each placed object's grid and the way into it: what the crosshair is tested against
+// One object standing at a spot: the crosshair can find it, and the walker (whose feet are at
+// `floor`) cannot pass where it is solid between shin and shoulder. A plant stops the walker only
+// by what it has near the ground (its trunk, its pot), so low boughs can be walked under.
+function stands(item, holder, tpl, x, y, z, rotDegrees, s, floor, blocks) {
+  const a = THREE.MathUtils.degToRad(rotDegrees), g = tpl.grid;
+  const into = new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a), new THREE.Vector3(s, s, s)).invert();
+  picks.push({ item, holder, grid: g, into });
+  const plan = blocks && planOf(g, (floor + (tpl.leafy ? 0.2 : 0.25) - y) / s, (floor + (tpl.leafy ? 0.8 : 1.5) - y) / s);
+  if (!plan) return;
+  const far = Math.hypot(Math.max(-g.min.x, g.min.x + g.nx * g.cell), Math.max(-g.min.z, g.min.z + g.nz * g.cell)) * s;
+  colliders.push({ plan, grid: g, x, z, cos: Math.cos(a), sin: Math.sin(a), s, far });
 }
 const lives = [];                  // objects that open
 const waiting = [];                // placements whose support is not built yet
 const placed = new Map();          // layout name → { x, y, z, rot, top }
 let triangleCount = 0, instanceCount = 0;
 
-function footprint(tpl, rot) {
-  const quarter = Math.round(rot / 90) % 2 !== 0;
-  return { w: quarter ? tpl.size.z : tpl.size.x, d: quarter ? tpl.size.x : tpl.size.z };
-}
-
 function putOne(entry, spot) {
   const { item, tpl } = entry;
   let { x, z } = spot, y = spot.y ?? (inHouse(x, z) ? HOUSE.floor : ground(x, z));
-  if (item.hang) y = HOUSE.wall - tpl.size.y * (spot.s || 1);
+  const floor = y;
+  if (item.hang) y = HOUSE.wall - tpl.size.y * (spot.s || 1) + (item.up || 0);      // `up`: how much of its rod is above the ceiling
   const rot = spot.rot || 0;
   if (spot.on) {
     const base = placed.get(spot.on);
@@ -434,7 +511,8 @@ function putOne(entry, spot) {
     const a = THREE.MathUtils.degToRad(base.rot);
     x = base.x + (spot.dx || 0) * Math.cos(a) + (spot.dz || 0) * Math.sin(a);
     z = base.z - (spot.dx || 0) * Math.sin(a) + (spot.dz || 0) * Math.cos(a);
-    y = base.top;
+    const rest = surfaceAt(base.grid, spot.dx || 0, spot.dz || 0);
+    y = rest > -Infinity ? base.y + rest * base.s : base.top;
   }
   const holder = new THREE.Group();
   holder.position.set(x, y, z);
@@ -456,15 +534,11 @@ function putOne(entry, spot) {
   (item.indoors ? indoors : outdoors).add(holder);
   if (item.indoors) lampsStale = performance.now();
   sunStale = true;
-  proxy(item, holder, tpl.size, x, y, z, rot + (spot.on ? (placed.get(spot.on)?.rot || 0) : 0), spot.s || 1);
+  const s = spot.s || 1, turned = rot + (spot.on ? (placed.get(spot.on)?.rot || 0) : 0);
+  stands(item, holder, tpl, x, y, z, turned, s, floor, item.solid !== false && !spot.on && tpl.size.y * s > 0.35);
   triangleCount += tpl.triangles;
   instanceCount += 1;
-  const s = spot.s || 1, f = footprint(tpl, rot);
-  placed.set(spot.name || item.id, { x, y, z, rot, top: y + tpl.size.y * s });
-  if (item.solid !== false && !spot.on && tpl.size.y * s > 0.35) {
-    const pad = item.pad ?? 0;
-    colliders.push({ x0: x - f.w * s / 2 + pad, x1: x + f.w * s / 2 - pad, z0: z - f.d * s / 2 + pad, z1: z + f.d * s / 2 - pad });
-  }
+  placed.set(spot.name || item.id, { x, y, z, rot: turned, top: y + tpl.size.y * s, grid: tpl.grid, s });
   const ready = waiting.filter(([, sp]) => placed.has(sp.on));
   for (const pair of ready) waiting.splice(waiting.indexOf(pair), 1);
   for (const [e, sp] of ready) putOne(e, sp);
@@ -493,13 +567,14 @@ function scatter(entry, rule) {
     if (!zone(x, z) || Math.abs(x) > 122 || Math.abs(z) > 122) continue;
     if (taken.some((t) => Math.hypot(t.x - x, t.z - z) < t.r + gap)) continue;
     const s = (rule.s || 1) * (0.82 + rand() * 0.4);
-    spots.push({ x, z, y: ground(x, z), rot: rand() * 360, s });
+    const y = ground(x, z);
+    spots.push({ x, z, y, at: rule.zone === 'pond' ? -0.405 : y - 0.04, rot: rand() * 360, s });      // (lily pads float just clear of the water: level with it, they flicker)
     taken.push({ x, z, r: gap });
   }
   if (!spots.length) return;
   const dummy = new THREE.Object3D();
   const place = (sp) => {
-    dummy.position.set(sp.x, rule.zone === 'pond' ? -0.42 : sp.y - 0.04, sp.z);
+    dummy.position.set(sp.x, sp.at, sp.z);
     dummy.rotation.set(0, THREE.MathUtils.degToRad(sp.rot), 0);
     dummy.scale.setScalar(sp.s);
     dummy.updateMatrix();
@@ -525,11 +600,10 @@ function scatter(entry, rule) {
       outdoors.add(mesh);
     }
   }
-  for (const sp of spots) proxy(item, null, tpl.size, sp.x, sp.y, sp.z, sp.rot, sp.s);
+  for (const sp of spots) stands(item, null, tpl, sp.x, sp.at, sp.z, sp.rot, sp.s, sp.y, !!rule.trunk);
   sunStale = true;
   triangleCount += tpl.triangles * spots.length;
   instanceCount += spots.length;
-  if (rule.trunk) for (const s of spots) colliders.push({ x: s.x, z: s.z, r: rule.trunk * s.s });
 }
 
 function arrive(item, tpl) {
@@ -655,10 +729,23 @@ addEventListener('mousemove', (e) => { if (locked) look(e.movementX, e.movementY
 $('enter').addEventListener('click', () => { $('start').hidden = true; takePointer(); });
 $('showcredits').addEventListener('click', () => $('credits').showModal());
 
-function blocked(x, z) {
-  const r = 0.28;
+function blocked(x, z, r = 0.28) {
   for (const c of colliders) {
-    if (c.r !== undefined) { if (Math.hypot(x - c.x, z - c.z) < c.r + r) return true; continue; }
+    if (c.plan) {
+      const dx = x - c.x, dz = z - c.z;
+      if (dx * dx + dz * dz > (c.far + r) ** 2) continue;
+      // into the object's own frame, then the cells of its plan within reach
+      const { min, cell, nx, nz } = c.grid, reach = r / c.s;
+      const lx = (dx * c.cos - dz * c.sin) / c.s - min.x, lz = (dx * c.sin + dz * c.cos) / c.s - min.z;
+      const i0 = Math.max(0, Math.floor((lx - reach) / cell)), i1 = Math.min(nx - 1, Math.floor((lx + reach) / cell));
+      const j0 = Math.max(0, Math.floor((lz - reach) / cell)), j1 = Math.min(nz - 1, Math.floor((lz + reach) / cell));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        if (!c.plan[j * nx + i]) continue;
+        const ex = lx - Math.max(i * cell, Math.min(lx, (i + 1) * cell)), ez = lz - Math.max(j * cell, Math.min(lz, (j + 1) * cell));
+        if (ex * ex + ez * ez < reach * reach) return true;
+      }
+      continue;
+    }
     if (c.x1 - c.x0 <= 0 || c.z1 - c.z0 <= 0) continue;
     const nx = Math.max(c.x0, Math.min(x, c.x1)), nz = Math.max(c.z0, Math.min(z, c.z1));
     if ((x - nx) ** 2 + (z - nz) ** 2 < r * r) return true;
@@ -694,12 +781,37 @@ function lookAt(now) {
   if (now - lastLook < 180) return;
   lastLook = now;
   ray.setFromCamera(new THREE.Vector2(0, 0), camera);
-  const hit = ray.intersectObjects(picks, false)[0];
-  const item = hit ? hit.object.userData.item : null, holder = hit ? hit.object.userData.holder : null;
+  let hit = null, reach = ray.intersectObjects(walls, false)[0]?.distance ?? ray.far;
+  for (const pick of picks) {
+    const d = touched(pick, ray.ray, reach);
+    if (d < reach) { reach = d; hit = pick; }
+  }
+  const item = hit ? hit.item : null, holder = hit ? hit.holder : null;
   seen = item ? { item, holder } : null;
   const live = seen && lives.find((l) => l.holder === holder);
   $('name').textContent = item ? item.title : '';
   $('about').textContent = item ? `${item.program.split('\n').length} lines of Python · ${item.source}${live ? ' · press E to ' + (live.open ? 'close' : 'open') : ''}` : '';
+}
+// How far along a ray the first filled cell of an object's grid is, or Infinity.
+const rayFrom = new THREE.Vector3(), rayStep = new THREE.Vector3();
+function touched(pick, line, reach) {
+  const { min, cell, nx, ny, nz, data } = pick.grid;
+  rayFrom.copy(line.origin).applyMatrix4(pick.into);
+  rayStep.copy(line.origin).add(line.direction).applyMatrix4(pick.into).sub(rayFrom);      // one metre of the ray, in the object's frame
+  let t0 = 0, t1 = reach;
+  for (const [o, d, lo, n] of [[rayFrom.x, rayStep.x, min.x, nx], [rayFrom.y, rayStep.y, min.y, ny], [rayFrom.z, rayStep.z, min.z, nz]]) {
+    const hi = lo + n * cell;
+    if (Math.abs(d) < 1e-9) { if (o < lo || o > hi) return Infinity; continue; }
+    const a = (lo - o) / d, b = (hi - o) / d;
+    t0 = Math.max(t0, Math.min(a, b)); t1 = Math.min(t1, Math.max(a, b));
+    if (t0 > t1) return Infinity;
+  }
+  const dt = cell * 0.5 / rayStep.length();
+  for (let t = t0; t <= t1; t += dt) {
+    const ix = Math.floor((rayFrom.x + rayStep.x * t - min.x) / cell), iy = Math.floor((rayFrom.y + rayStep.y * t - min.y) / cell), iz = Math.floor((rayFrom.z + rayStep.z * t - min.z) / cell);
+    if (ix >= 0 && iy >= 0 && iz >= 0 && ix < nx && iy < ny && iz < nz && data[(iy * nz + iz) * nx + ix]) return t;
+  }
+  return Infinity;
 }
 function interact() {
   const live = seen && lives.find((l) => l.holder === seen.holder);
@@ -744,8 +856,9 @@ function redrawLampShadows(which = lamps) {
   sky.visible = true;
 }
 function followSun() {
+  // (it moves on only once the walker is well past the halfway line, so pacing across one does not redraw the shadows each time)
+  if (sun.position.y > 1 && Math.abs(me.x - sun.target.position.x) < 6 && Math.abs(me.z - sun.target.position.z) < 6) return;
   const x = Math.round(me.x / 8) * 8, z = Math.round(me.z / 8) * 8;
-  if (x === sun.target.position.x && z === sun.target.position.z && sun.position.y > 1) return;
   sun.target.position.set(x, 0, z);
   sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 110);
   sun.target.updateMatrixWorld();
@@ -787,4 +900,4 @@ window.stand = (x, z, yawDegrees = 0, pitch = -0.1) => {
   draw();
   return `${$('name').textContent} | ${$('about').textContent}`;
 };
-Object.assign(window, { me, colliders, scene, camera, renderer, lives, interact, walk });
+Object.assign(window, { me, colliders, scene, camera, renderer, lives, interact, walk, blocked });
