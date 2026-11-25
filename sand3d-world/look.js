@@ -152,29 +152,80 @@ export function surfaceOf(material) {
   return SURFACE_OF[kind] || 'smooth';
 }
 
-let room = null;
-export const setIndoorLight = (texture) => { room = texture; };
-export const indoorLight = () => room;
+// Indoors, a surface is lit by its own room: what can be seen from the middle of that room, windows
+// and sunlit floor included (world.js captures it once the house is furnished). Until then, and
+// for anything not yet captured, a neutral studio room stands in.
+let standIn = null;
+const roomLights = new Map();      // room → { texture, gain, materials }
+export const setIndoorLight = (texture) => { standIn = texture; };
+function roomOf(name) {
+  if (!roomLights.has(name)) roomLights.set(name, { texture: null, gain: 1, materials: new Set() });
+  return roomLights.get(name);
+}
+function wear(material, light) {
+  material.envMap = light.texture || standIn;
+  material.envMapIntensity = light.texture ? light.gain : material.userData.standIn;
+  material.needsUpdate = true;
+}
+// Says which room a material is in; `standIn` is how strongly the studio room lights it meanwhile.
+export function inRoom(material, name, standInGain = 0.65) {
+  material.userData.standIn = standInGain;
+  const light = roomOf(name);
+  light.materials.add(material);
+  wear(material, light);
+  return material;
+}
+export function setRoomLight(name, texture, gain = 1) {
+  const light = roomOf(name);
+  Object.assign(light, { texture, gain });
+  for (const material of light.materials) wear(material, light);
+}
 
-// One shared material per look: surface, roughness to a tenth, metal, coat, glass, sidedness, indoors.
+// One shared material per look: surface, roughness to a tenth, metal, coat, glass, sidedness, and
+// where it is: 'o' outdoors, or the name of its room.
 const shared = new Map();
-export function lookKey(material, indoors, unit = 1) {
+export function lookKey(material, where = 'o', unit = 1) {
   const glass = material.transparent;
   return [surfaceOf(material), Math.round(material.roughness * 10), material.metalness > 0.5 ? 'm' : 'd',
-    material.clearcoat > 0.2 ? 'c' : '', glass ? 't' : '', material.side === THREE.DoubleSide && !glass ? '2' : '', indoors ? 'i' : 'o', unit].join('|');
+    material.clearcoat > 0.2 ? 'c' : '', glass ? 't' : '', material.side === THREE.DoubleSide && !glass ? '2' : '', where, unit].join('|');
 }
 export function lookMaterial(key) {
   if (shared.has(key)) return shared.get(key);
   const [surface, rough, metal, coat, glass, two, where, unit] = key.split('|');
   const m = new THREE.MeshPhysicalMaterial({
     vertexColors: true, roughness: Math.max(0.05, Number(rough) / 10), metalness: metal === 'm' ? 1 : 0,
-    clearcoat: coat ? 0.6 : 0, clearcoatRoughness: 0.2, envMapIntensity: where === 'i' ? (metal === 'm' ? 1.3 : 0.65) : 1, envMap: where === 'i' ? room : null,
+    clearcoat: coat ? 0.6 : 0, clearcoatRoughness: 0.2,
     side: two || glass ? THREE.DoubleSide : THREE.FrontSide,
   });
-  if (glass) Object.assign(m, { transparent: true, opacity: 0.28, roughness: 0.03, depthWrite: false, envMapIntensity: where === 'i' ? 0.6 : 1.6 });
+  if (glass) Object.assign(m, { transparent: true, opacity: 0.28, roughness: 0.03, depthWrite: false, envMapIntensity: 1.6 });
   else detailed(m, surface, surface === 'leaf' && two ? 0.6 : 1, Number(unit) || 1);
+  if (where !== 'o') inRoom(m, where, glass ? 0.6 : metal === 'm' ? 1.3 : 0.65);
   shared.set(key, m);
   return m;
+}
+
+// A floor darkens where furniture stands close over it. `shade` holds how far above the floor the
+// lowest thing is at each spot (white: nothing), `into` takes a place in the world to that picture,
+// `origin` is where the floor's own mesh stands. Added to a material that already has its detail.
+export function grounded(material, shade, into, origin) {
+  const detail = material.onBeforeCompile, key = material.customProgramCacheKey();
+  const uniforms = { uShade: { value: shade }, uShadeInto: { value: into }, uShadeOrigin: { value: origin } };
+  material.onBeforeCompile = (shader, renderer) => {
+    detail(shader, renderer);
+    Object.assign(shader.uniforms, uniforms);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform sampler2D uShade; uniform mat4 uShadeInto; uniform vec3 uShadeOrigin;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          vec2 at = (uShadeInto * vec4(vDetailPos + uShadeOrigin, 1.0)).xy * 0.5 + 0.5;
+          // tight where a leg touches, then two wider blurs that spill out round the piece as a soft halo
+          float tight = 1.0 - texture2D(uShade, at, 2.0).r, halo = 1.0 - texture2D(uShade, at, 5.0).r, far = 1.0 - texture2D(uShade, at, 6.5).r;
+          diffuseColor.rgb *= 1.0 - 0.6 * pow(clamp(0.5 * tight + halo + 0.9 * far, 0.0, 1.0), 0.8);
+        }`);
+  };
+  material.customProgramCacheKey = () => `${key}:grounded`;
+  material.needsUpdate = true;
+  return material;
 }
 
 export function plain(color, surface, { strength = 1, ...options } = {}) {

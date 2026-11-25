@@ -24,8 +24,15 @@ browser and meshed live. No 3D model files are shipped.
 - `layout.js` is the floor plan and the scatter rules.
 
 Lighting is a sun with soft shadows, a physical sky that fills the shade (about a fifth as
-strong as the sun, so shadows read), ambient occlusion and a light bloom; rooms reflect a
-neutral room, not the sky, and the outside walls are lined indoors so they do the same. Each room's ceiling
+strong as the sun, so shadows read), ambient occlusion and a light bloom. Indoors, each room
+is lit by itself: once the house is furnished its middle is photographed all round (windows,
+sunlit floor, wall colour) and that picture lights and is mirrored by everything in the room;
+it is taken twice, for one more bounce. Each window and outside door also lets in a soft
+light of its own size, worked out only while the walker is in the house. The floors darken
+under and around the furniture, from a picture of how near each piece hangs over them. By day
+the ceiling lamps only fill. The picture is developed with the AgX curve, the eye adapts
+between indoors and outdoors, and a lens's corner fall-off and a fine grain are added.
+Each room's ceiling
 lamp casts shadows, redrawn only when something indoors changes. Household parts get their
 extruded edges eased by 3.5 mm, a finish the programs do not ask for. `?quality=low` drops
 the ambient occlusion, bloom and anti-aliasing.

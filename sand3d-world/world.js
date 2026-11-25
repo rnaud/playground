@@ -13,7 +13,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { build, loadCsg } from '../sand3d-live/build.js';
 import { PLACE, SCATTER } from './layout.js';
 import { makeGrass } from './grass.js';
-import { detailed, lookKey, lookMaterial, plain, setIndoorLight, indoorLight } from './look.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
+import { detailed, grounded, lookKey, lookMaterial, plain, setIndoorLight, inRoom, setRoomLight } from './look.js';
 
 const $ = (id) => document.getElementById(id);
 const CACHE_VERSION = 'v8';      // (bump when sand3d.py changes what a program builds)
@@ -22,6 +24,15 @@ const QUALITY = new URLSearchParams(location.search).get('quality') || 'high';  
 // ---------------------------------------------------------------- the place
 const HOUSE = { x0: -7, x1: 7, z0: -5, z1: 5, wall: 2.8, thick: 0.16, floor: 0.12 };
 const POND = { x: -24, z: 16, r: 7.5 };
+// The rooms, and where each is looked at from when its light is captured (clear of the furniture).
+const ROOMS = [
+  { name: 'living', x0: -7, x1: 0, z0: -5, z1: 1, eye: [-2.2, -2.9] },
+  { name: 'kitchen', x0: 0, x1: 7, z0: -5, z1: 1, eye: [2.2, -2.6] },
+  { name: 'bedroom', x0: -7, x1: -1, z0: 1, z1: 5, eye: [-4.0, 2.6] },
+  { name: 'bathroom', x0: -1, x1: 2.5, z0: 1, z1: 5, eye: [0.75, 2.9] },
+  { name: 'study', x0: 2.5, x1: 7, z0: 1, z1: 5, eye: [4.2, 2.2] },
+];
+const roomAt = (x, z) => ROOMS.find((r) => x > r.x0 && x < r.x1 && z > r.z0 && z < r.z1)?.name || null;
 
 function hills(x, z) {
   return 1.7 * Math.sin(x * 0.045 + 1.3) * Math.cos(z * 0.04) + 0.8 * Math.sin(x * 0.11 + z * 0.07) + 0.3 * Math.sin(x * 0.23 - z * 0.19);
@@ -46,8 +57,8 @@ const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'h
 renderer.setPixelRatio(Math.min(devicePixelRatio, QUALITY === 'low' ? 1 : 1.25));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.42;
+renderer.toneMapping = THREE.AgXToneMapping;          // (rolls off the way film does; ACES burned the colours)
+renderer.toneMappingExposure = 0.6;
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 1400);
@@ -103,6 +114,24 @@ if (QUALITY !== 'low') {
   composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.07, 0.35, 3.0));
 }
 composer.addPass(new OutputPass());
+// What a lens and a sensor add: the corners fall off a little, and there is a fine grain.
+const finish = new ShaderPass({
+  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uTime; varying vec2 vUv;
+    float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + uTime) * 43758.5453); }
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv); vec2 d = vUv - 0.5;
+      c.rgb = mix(vec3(dot(c.rgb, vec3(0.2126, 0.7152, 0.0722))), c.rgb, 1.12);      // a print's colour and contrast
+      c.rgb = (c.rgb - 0.5) * 1.06 + 0.5;
+      c.rgb *= 1.0 - 0.3 * smoothstep(0.2, 1.0, dot(d, d) * 2.4);
+      c.rgb += (hash(gl_FragCoord.xy) - 0.5) * 0.016;
+      gl_FragColor = c;
+    }`,
+});
+if (QUALITY !== 'low') composer.addPass(finish);
+// The eye adapts: it opens up indoors, where the windows then burn out as they do in a photograph.
+const EXPOSURE = { outdoors: 0.6, indoors: 1.1 };
 
 function resize() {
   renderer.setSize(innerWidth, innerHeight);
@@ -122,6 +151,11 @@ scene.add(outdoors, indoors);
 const lamps = [];
 let lampsStale = 0;
 const colliders = [];            // what the walker cannot enter: {x0, x1, z0, z1} walls, and objects by the cells they fill
+const floorPaints = [];          // the floors' materials: their colour counts for less in the light a room gives itself
+const floorShade = new THREE.WebGLRenderTarget(896, 640, { generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter });
+const floorShadeInto = new THREE.Matrix4();
+const dayLights = [];            // the light each window and outside door lets in
+let shell = null;                // the house itself
 const walls = [];                // the house shell: the crosshair does not name things through it
 
 function makeTerrain() {
@@ -175,16 +209,20 @@ let ripple = null;
 
 // ---------------------------------------------------------------- the house shell (the only part not from the dataset)
 function makeHouse() {
+  RectAreaLightUniformsLib.init();
   const { x0, x1, z0, z1, wall: H, thick: T, floor } = HOUSE;
   const house = new THREE.Group();
-  const indoor = { envMap: indoorLight(), envMapIntensity: 0.65 };
+  // What a room is made of is its own material, so that each room can be lit by itself.
+  const perRoom = (make) => { const made = new Map(); return (room) => { if (!made.has(room)) made.set(room, inRoom(make(), room)); return made.get(room); }; };
+  const paint = perRoom(() => plain('#efe9df', 'plaster', { roughness: 0.94 }));
+  const ceilingPaint = perRoom(() => plain('#f6f3ec', 'plaster', { roughness: 0.96 }));
   const plaster = plain('#d9d0be', 'plaster', { roughness: 0.92 });
-  const inner = plain('#efe9df', 'plaster', { roughness: 0.94, ...indoor });
+  const inner = paint('living');                                   // (the cores of the partitions, seen only in doorways)
   const glass = new THREE.MeshPhysicalMaterial({ color: '#dfeef2', roughness: 0.02, transparent: true, opacity: 0.16, envMapIntensity: 1.8, depthWrite: false });
   const trim = plain('#f4f1ea', 'smooth', { roughness: 0.55 });
   const timber = plain('#6a4a32', 'wood', { roughness: 0.6 });
-  const doorPaint = plain('#f2efe8', 'smooth', { roughness: 0.45, ...indoor });
-  const brass = new THREE.MeshStandardMaterial({ color: '#b8935a', metalness: 1, roughness: 0.3, envMap: indoorLight(), envMapIntensity: 0.6 });
+  const doorPaint = inRoom(plain('#f2efe8', 'smooth', { roughness: 0.45 }), 'living');
+  const brass = inRoom(new THREE.MeshStandardMaterial({ color: '#b8935a', metalness: 1, roughness: 0.3 }), 'living', 0.6);
   const box = (w, h, d, x, y, z, m, solid = true) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
     mesh.position.set(x, y + h / 2, z);
@@ -195,21 +233,39 @@ function makeHouse() {
     return mesh;
   };
   // A wall along x (at z = at) or along z (at x = at), from a to b, with door and window openings,
-  // each opening dressed with a frame, and windows with a sill and glazing bars. An outside wall
-  // says which side its room is on (`room`: 1 or -1) and is lined there with the indoor plaster,
-  // so that its inner face is lit by the room like the partitions, not by the sky.
-  const wallRun = (axis, at, a, b, openings, m, room = 0) => {
+  // each opening dressed with a frame, and windows with a sill and glazing bars. Every face that
+  // looks into a room is lined with that room's own plaster, so it is lit by that room and not by
+  // the sky or by the room behind it.
+  const wallRun = (axis, at, a, b, openings, m) => {
     const piece = (from, to, y0, y1, mat = m, solid = true, deep = T, lift = 0) => {
       if (to - from < 1e-3 || y1 - y0 < 1e-3) return;
       const len = to - from, mid = (from + to) / 2;
       if (axis === 'x') box(len, y1 - y0, deep, mid, y0, at + lift, mat, solid); else box(deep, y1 - y0, len, at + lift, y0, mid, mat, solid);
-      if (!room || mat !== m) return;
-      const skin = 0.008, off = at + room * (T + skin) / 2;
-      if (axis === 'x') box(len, y1 - y0, skin, mid, y0, off, inner, false); else box(skin, y1 - y0, len, off, y0, mid, inner, false);
+      if (mat !== m) return;
+      const skin = 0.008, cuts = [from, ...(axis === 'x' ? [-1, 0, 2.5] : [1]).filter((c) => c > from + 0.01 && c < to - 0.01), to];
+      for (const side of [-1, 1]) for (let i = 0; i + 1 < cuts.length; i++) {
+        const p = cuts[i], q = cuts[i + 1], c = (p + q) / 2, off = at + side * (T + skin) / 2;
+        const room = axis === 'x' ? roomAt(c, at + side * 0.3) : roomAt(at + side * 0.3, c);
+        if (!room) continue;
+        const lining = axis === 'x' ? box(q - p, y1 - y0, skin, c, y0, off, paint(room), false) : box(skin, y1 - y0, q - p, off, y0, c, paint(room), false);
+        lining.castShadow = false;
+      }
     };
     let cursor = a;
     for (const o of [...openings].sort((p, q) => p.a - q.a)) {
       piece(cursor, o.a, 0, H);
+      // Daylight comes in at every opening in an outside wall: a soft light the size of the opening,
+      // so what is near a window is brighter on the side that faces it.
+      if (m === plaster && QUALITY !== 'low') for (const side of [-1, 1]) {
+        const c = (o.a + o.b) / 2, room = axis === 'x' ? roomAt(c, at + side * 0.3) : roomAt(at + side * 0.3, c);
+        if (!room) continue;
+        const tall = o.kind === 'door' ? 2.1 : 1.2, y = o.kind === 'door' ? 1.05 : 1.5, off = at + side * (T / 2 + 0.03);
+        const day = new THREE.RectAreaLight('#eaf1ff', 5, o.b - o.a, tall);
+        day.position.set(axis === 'x' ? c : off, y, axis === 'x' ? off : c);
+        day.lookAt(day.position.x + (axis === 'x' ? 0 : side), y, day.position.z + (axis === 'x' ? side : 0));
+        house.add(day);
+        dayLights.push(day);
+      }
       const F = 0.07, D = T + 0.06;
       if (o.kind === 'door') {
         piece(o.a, o.b, 2.1, H);
@@ -246,20 +302,24 @@ function makeHouse() {
     piece(cursor, b, 0, H);
   };
   const D = (a, b, swing = 0) => ({ a, b, kind: 'door', swing }), W = (a, b) => ({ a, b, kind: 'window' });
-  wallRun('x', z0, x0, x1, [W(-5.4, -3.6), D(-1.7, -0.7), W(2.4, 4.6)], plaster, 1);
-  wallRun('x', z1, x0, x1, [W(-5, -3), W(0.2, 1.3), D(4.2, 5.3)], plaster, -1);
-  wallRun('z', x0, z0, z1, [W(-3.2, -1.2), W(2.2, 3.8)], plaster, 1);
-  wallRun('z', x1, z0, z1, [W(-3.4, -1.4), W(2.4, 3.8)], plaster, -1);
+  wallRun('x', z0, x0, x1, [W(-5.4, -3.6), D(-1.7, -0.7), W(2.4, 4.6)], plaster);
+  wallRun('x', z1, x0, x1, [W(-5, -3), W(0.2, 1.3), D(4.2, 5.3)], plaster);
+  wallRun('z', x0, z0, z1, [W(-3.2, -1.2), W(2.2, 3.8)], plaster);
+  wallRun('z', x1, z0, z1, [W(-3.4, -1.4), W(2.4, 3.8)], plaster);
   wallRun('z', 0, z0, 1, [D(-2.9, -1.1)], inner);
   wallRun('x', 1, x0, x1, [D(-4.7, -3.7, -100), D(4.3, 5.4, 100)], inner);
   wallRun('z', -1, 1, z1, [], inner);
   wallRun('z', 2.5, 1, z1, [D(2.6, 3.5, -100)], inner);
   // Floors: boards in the living rooms, tiles in the kitchen and bathroom, a skirting board round each.
-  const boards = plain('#b98d5f', 'planks', { roughness: 0.42, ...indoor }), tiles = plain('#d8d3c8', 'tiles', { roughness: 0.3, ...indoor }), bath = plain('#b9cdd2', 'tiles', { roughness: 0.25, ...indoor });
-  const skirting = plain('#f1ede4', 'smooth', { roughness: 0.5, ...indoor });
-  const rooms = [[x0, 0, z0, 1, boards], [0, x1, z0, 1, tiles], [x0, -1, 1, z1, boards], [-1, 2.5, 1, z1, bath], [2.5, x1, 1, z1, boards]];
-  for (const [a, b, c, d, m] of rooms) {
-    box(b - a, floor, d - c, (a + b) / 2, 0, (c + d) / 2, m, false).castShadow = false;
+  const boards = () => plain('#b09474', 'planks', { roughness: 0.42 }), tiles = () => plain('#c9c4b8', 'tiles', { roughness: 0.3 }), bath = () => plain('#b9cdd2', 'tiles', { roughness: 0.25 });
+  const skirt = perRoom(() => plain('#f1ede4', 'smooth', { roughness: 0.5 }));
+  const floors = { living: boards, kitchen: tiles, bedroom: boards, bathroom: bath, study: boards };
+  for (const { name, x0: a, x1: b, z0: c, z1: d } of ROOMS) {
+    const skirting = skirt(name);
+    const ground = inRoom(floors[name](), name);
+    floorPaints.push(grounded(ground, floorShade.texture, floorShadeInto, new THREE.Vector3((a + b) / 2, floor / 2, (c + d) / 2)));
+    box(b - a, floor, d - c, (a + b) / 2, 0, (c + d) / 2, ground, false).castShadow = false;
+    box(b - a - T, 0.02, d - c - T, (a + b) / 2, H - 0.02, (c + d) / 2, ceilingPaint(name), false).castShadow = false;
     const i = T / 2 + 0.008;
     box(b - a - T, 0.09, 0.016, (a + b) / 2, floor, c + i, skirting, false); box(b - a - T, 0.09, 0.016, (a + b) / 2, floor, d - i, skirting, false);
     box(0.016, 0.09, d - c - T, a + i, floor, (c + d) / 2, skirting, false); box(0.016, 0.09, d - c - T, b - i, floor, (c + d) / 2, skirting, false);
@@ -275,7 +335,7 @@ function makeHouse() {
   leaf.castShadow = leaf.receiveShadow = true;
   house.add(leaf);
   // Ceiling and a tiled gable roof with eaves.
-  box(x1 - x0, 0.1, z1 - z0, 0, H, 0, inner, false);
+  box(x1 - x0, 0.1, z1 - z0, 0, H, 0, plaster, false);
   const rise = 2.2, half = (z1 - z0) / 2 + 0.75, slope = Math.hypot(half, rise), roofMat = plain('#8a4a39', 'roof', { roughness: 0.8 });
   for (const side of [-1, 1]) {
     const slab = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 + 1.3, 0.12, slope + 0.1), roofMat);
@@ -297,8 +357,9 @@ function makeHouse() {
   }
   // A ceiling light in each room: the fitting glows, the light it gives is warm and falls off.
   const shade = new THREE.MeshStandardMaterial({ color: '#fff3dc', emissive: '#ffd9a0', emissiveIntensity: 3 });
-  for (const [x, z, power] of [[-3.5, 0.2, 11], [3.5, -2, 12], [-4, 3, 8], [0.75, 3, 6], [5.2, 4.2, 6]]) {
-    const lamp = new THREE.PointLight('#ffdcb0', power, 12, 1.9);
+  // (by day they only fill: the rooms are lit by their windows)
+  for (const [x, z, power] of [[-3.5, 0.2, 3.8], [3.5, -2, 4.2], [-4, 3, 2.8], [0.75, 3, 2.4], [5.2, 4.2, 2.1]]) {
+    const lamp = new THREE.PointLight('#ffe9cf', power, 12, 1.9);
     lamp.position.set(x, H - 0.3, z);
     lamp.castShadow = true;
     lamp.shadow.mapSize.set(1024, 1024);
@@ -315,6 +376,7 @@ function makeHouse() {
     fitting.castShadow = false;
     house.add(fitting);
   }
+  shell = house;
   house.updateMatrixWorld(true);
   house.traverse((o) => { if (o.isMesh && o.material !== glass) walls.push(o); });
   scene.add(house);
@@ -435,7 +497,7 @@ function template(built, item) {
         for (let i = 0; i < color.length; i += 3) { color[i] = c.r; color[i + 1] = c.g; color[i + 2] = c.b; }
         o.geometry.setAttribute('color', new THREE.BufferAttribute(color, 3));
       }
-      o.material = lookMaterial(lookKey(o.material, item.indoors, 0.001));       // these parts are still in millimetres
+      o.material = lookMaterial(lookKey(o.material, item.room || 'o', 0.001));       // these parts are still in millimetres
     });
     const fit = fitting(new THREE.Box3().setFromObject(root), item);
     root.traverse((o) => { if (o.userData.swell) swell(o.geometry, o.userData.swell * HAIR / (fit.getMaxScaleOnAxis() * o.matrixWorld.getMaxScaleOnAxis())); });
@@ -454,7 +516,7 @@ function template(built, item) {
   let ordinal = 0;
   root.traverse((o) => {
     if (!o.isMesh || (names.length && dropped(o, names))) return;
-    const key = lookKey(o.material, item.indoors);
+    const key = lookKey(o.material, item.room || 'o');
     if (!byClass.has(key)) byClass.set(key, []);
     const g = flattened(o);
     g.userData.swell = (ordinal += 1) % 12;
@@ -641,7 +703,12 @@ const FRESH = new URLSearchParams(location.search).has('fresh');      // ?fresh 
 async function buildAll() {
   const manifest = await (await fetch('data/world.json')).json();
   const items = manifest.items;
-  for (const item of items) item.indoors = PLACE.some((p) => p.id === item.id && (p.on || inHouse(p.x, p.z)));
+  for (const item of items) {                       // the room an object is in: its own, or that of what it stands on
+    let spot = PLACE.find((p) => p.id === item.id);
+    while (spot?.on) spot = PLACE.find((p) => (p.name || p.id) === spot.on);
+    item.room = spot ? roomAt(spot.x, spot.z) : null;
+    item.indoors = !!item.room;
+  }
   stats.total = items.length;
   window.world = { stats, items, things, failures: stats.failed };
   credits(items);
@@ -695,7 +762,7 @@ function progress(item) {
   $('building').textContent = done
     ? `${stats.total - stats.failed.length} of ${stats.total} objects built from code · ${instanceCount.toLocaleString()} placed · ${(triangleCount / 1e6).toFixed(2)} M triangles`
     : `Building from code: ${stats.done} of ${stats.total} · ${item.title}`;
-  if (done) { stats.seconds = (performance.now() - stats.started) / 1000; $('progress').hidden = true; }
+  if (done) { stats.seconds = (performance.now() - stats.started) / 1000; $('progress').hidden = true; roomsStale = true; }
 }
 
 function credits(items) {
@@ -847,6 +914,57 @@ const grass = makeGrass({ pond: POND, house: HOUSE });
 outdoors.add(grass.mesh);
 buildAll().catch((error) => { $('building').textContent = `Could not start: ${error.message || error}`; console.error(error); });
 
+// Under the furniture: the rooms' contents are looked at from the floor up, and how near the
+// lowest thing hangs over each spot is kept as a picture. The floors darken by it (look.js), so a
+// sofa sits on the boards and does not float over them. Taken once the house is furnished.
+const SHADE_REACH = 1.1;           // metres over the floor that count
+const heightOver = new THREE.ShaderMaterial({
+  side: THREE.DoubleSide, uniforms: { uFloor: { value: HOUSE.floor }, uReach: { value: SHADE_REACH } },
+  vertexShader: 'varying float vUp; uniform float uFloor, uReach; void main() { vec4 w = modelMatrix * vec4(position, 1.0); vUp = (w.y - uFloor) / uReach; gl_Position = projectionMatrix * viewMatrix * w; }',
+  fragmentShader: 'varying float vUp; void main() { gl_FragColor = vec4(vec3(clamp(vUp, 0.0, 1.0)), 1.0); }',
+});
+function shadeFloors() {
+  const up = new THREE.OrthographicCamera(HOUSE.x0, HOUSE.x1, -HOUSE.z0, -HOUSE.z1, 0, SHADE_REACH);
+  up.position.set(0, HOUSE.floor + 0.004, 0);
+  up.up.set(0, 0, 1);
+  up.lookAt(0, 10, 0);
+  up.updateMatrixWorld(true);
+  floorShadeInto.multiplyMatrices(up.projectionMatrix, up.matrixWorldInverse);
+  const hidden = [outdoors, shell, sky].filter((o) => o.visible), colour = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha();
+  hidden.forEach((o) => { o.visible = false; });
+  scene.overrideMaterial = heightOver;
+  renderer.setClearColor('#ffffff', 1);
+  renderer.setRenderTarget(floorShade);
+  renderer.clear();
+  renderer.render(scene, up);
+  renderer.setRenderTarget(null);
+  renderer.setClearColor(colour, alpha);
+  scene.overrideMaterial = null;
+  hidden.forEach((o) => { o.visible = true; });
+}
+
+// Each room is lit by itself: its middle is photographed all round (windows, sunlit floor, the
+// colour of its walls) and that picture, blurred, is what lights and is mirrored by everything in
+// the room. Taken twice, so the second picture holds the first one's light: one bounce more.
+const roomEye = new THREE.CubeCamera(0.05, 400, new THREE.WebGLCubeRenderTarget(256, { type: THREE.HalfFloatType }));
+const roomBlur = new THREE.PMREMGenerator(renderer);
+let roomsStale = false, roomGain = QUALITY === 'low' ? 1 : 0.6;      // (the windows' own light, where there is any, is the rest)
+function lightRooms(bounces = 2) {
+  // One picture from the middle of a room over-counts the floor, which fills half of it: with the
+  // floor at full colour the ceilings came out orange. It is photographed half as saturated.
+  const hsl = {}, kept = floorPaints.map((m) => m.color.clone());
+  for (const m of floorPaints) { m.color.getHSL(hsl); m.color.setHSL(hsl.h, hsl.s * 0.5, hsl.l); }
+  for (let b = 0; b < bounces; b++) for (const room of ROOMS) {
+    roomEye.position.set(room.eye[0], HOUSE.floor + 1.35, room.eye[1]);
+    roomEye.update(renderer, scene);
+    const was = room.light;
+    room.light = roomBlur.fromCubemap(roomEye.renderTarget.texture);
+    setRoomLight(room.name, room.light.texture, roomGain);
+    was?.dispose();
+  }
+  floorPaints.forEach((m, i) => m.color.copy(kept[i]));
+}
+
 // The lamps' shadows are drawn rarely, with the outdoors hidden: five lamps look six ways each,
 // and the trees have no business in that.
 const tiny = new THREE.WebGLRenderTarget(4, 4);
@@ -869,9 +987,16 @@ function followSun() {
   sun.target.updateMatrixWorld();
   sunStale = true;
 }
+// The windows' light is only worked out while the walker is in the house: it reaches every
+// surface in the world, and outdoors that cost a third of each frame for nothing to see.
+function daylight() {
+  const on = roomsStale || inHouse(me.x, me.z, 0.6);
+  if (dayLights.length && dayLights[0].visible !== on) for (const light of dayLights) light.visible = on;
+}
 const draw = () => {
   if (lampsStale && performance.now() - lampsStale > 400) { lampsStale = 0; redrawLampShadows(); }
   if (sunStale) { sunStale = false; sun.shadow.needsUpdate = true; }
+  if (roomsStale && !lampsStale) { roomsStale = false; shadeFloors(); lightRooms(); }
   renderer.setRenderTarget(sceneTarget);
   renderer.render(scene, camera);
   renderer.setRenderTarget(null);
@@ -886,6 +1011,10 @@ function frame(now) {
   animate(dt, now);
   lookAt(now);
   if (ripple) ripple.offset.set(now * 0.000012, now * 0.000007);
+  const goal = inHouse(me.x, me.z) ? EXPOSURE.indoors : EXPOSURE.outdoors;
+  renderer.toneMappingExposure += (goal - renderer.toneMappingExposure) * Math.min(1, dt * 2.2);
+  finish.uniforms.uTime.value = (now / 1000) % 10;
+  daylight();
   grass.update(camera.position, now / 1000, inHouse(me.x, me.z) ? 0.4 : 1);
   followSun();
   draw();
@@ -902,7 +1031,9 @@ window.stand = (x, z, yawDegrees = 0, pitch = -0.1) => {
   grass.update(camera.position, performance.now() / 1000, inHouse(me.x, me.z) ? 0.4 : 1);
   followSun();
   sun.target.updateMatrixWorld();
+  renderer.toneMappingExposure = inHouse(me.x, me.z) ? EXPOSURE.indoors : EXPOSURE.outdoors;
+  daylight();
   draw();
   return `${$('name').textContent} | ${$('about').textContent}`;
 };
-Object.assign(window, { me, colliders, scene, camera, renderer, lives, interact, walk, blocked });
+Object.assign(window, { me, colliders, scene, camera, renderer, lives, interact, walk, blocked, lamps, EXPOSURE, floorShade, relight: (gain = roomGain) => { roomGain = gain; lightRooms(); } });
