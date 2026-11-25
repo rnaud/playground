@@ -54,40 +54,48 @@ class Vec(tuple):
     xyz = property(lambda s: Vec(s[0], s[1], s[2]))
     length = property(lambda s: math.sqrt(sum(c * c for c in s)))
 
-    def __add__(s, o): return Vec(a + b for a, b in zip(s, o))
-    def __radd__(s, o): return Vec(a + b for a, b in zip(s, o))
-    def __sub__(s, o): return Vec(a - b for a, b in zip(s, o))
-    def __rsub__(s, o): return Vec(b - a for a, b in zip(s, o))
-    def __mul__(s, k): return Vec(a * k for a in s)
+    # (arithmetic builds the tuple directly: these run millions of times in a tree)
+    def __add__(s, o): return _vec(Vec, [a + b for a, b in zip(s, o)])
+    def __radd__(s, o): return _vec(Vec, [a + b for a, b in zip(s, o)])
+    def __sub__(s, o): return _vec(Vec, [a - b for a, b in zip(s, o)])
+    def __rsub__(s, o): return _vec(Vec, [b - a for a, b in zip(s, o)])
+    def __mul__(s, k): return _vec(Vec, [a * k for a in s])
     __rmul__ = __mul__
-    def __truediv__(s, k): return Vec(a / k for a in s)
-    def __neg__(s): return Vec(-a for a in s)
+    def __truediv__(s, k): return _vec(Vec, [a / k for a in s])
+    def __neg__(s): return _vec(Vec, [-a for a in s])
     def dot(s, o): return sum(a * b for a, b in zip(s, o))
 
     def cross(s, o):
-        return Vec(s[1] * o[2] - s[2] * o[1], s[2] * o[0] - s[0] * o[2], s[0] * o[1] - s[1] * o[0])
+        return _vec(Vec, (s[1] * o[2] - s[2] * o[1], s[2] * o[0] - s[0] * o[2], s[0] * o[1] - s[1] * o[0]))
 
     def normalized(s):
         n = s.length
         return Vec(s) if n < 1e-300 else s / n
 
 
+_vec = tuple.__new__
 I4 = (1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 1.0)
 
 
 def mmul(a, b):
-    return tuple(sum(a[4 * r + k] * b[4 * k + c] for k in range(4)) for r in range(4) for c in range(4))
+    """Product of two affine matrices (their last rows are 0 0 0 1), written out for speed."""
+    a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11 = a[:12]
+    b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11 = b[:12]
+    return (a0 * b0 + a1 * b4 + a2 * b8, a0 * b1 + a1 * b5 + a2 * b9, a0 * b2 + a1 * b6 + a2 * b10, a0 * b3 + a1 * b7 + a2 * b11 + a3,
+            a4 * b0 + a5 * b4 + a6 * b8, a4 * b1 + a5 * b5 + a6 * b9, a4 * b2 + a5 * b6 + a6 * b10, a4 * b3 + a5 * b7 + a6 * b11 + a7,
+            a8 * b0 + a9 * b4 + a10 * b8, a8 * b1 + a9 * b5 + a10 * b9, a8 * b2 + a9 * b6 + a10 * b10, a8 * b3 + a9 * b7 + a10 * b11 + a11,
+            0.0, 0.0, 0.0, 1.0)
 
 
 def mpoint(m, p):
     x, y, z = p[0], p[1], (p[2] if len(p) > 2 else 0.0)
-    return Vec(m[0] * x + m[1] * y + m[2] * z + m[3], m[4] * x + m[5] * y + m[6] * z + m[7],
-               m[8] * x + m[9] * y + m[10] * z + m[11])
+    return _vec(Vec, (m[0] * x + m[1] * y + m[2] * z + m[3], m[4] * x + m[5] * y + m[6] * z + m[7],
+                      m[8] * x + m[9] * y + m[10] * z + m[11]))
 
 
 def mdir(m, d):
     x, y, z = d
-    return Vec(m[0] * x + m[1] * y + m[2] * z, m[4] * x + m[5] * y + m[6] * z, m[8] * x + m[9] * y + m[10] * z)
+    return _vec(Vec, (m[0] * x + m[1] * y + m[2] * z, m[4] * x + m[5] * y + m[6] * z, m[8] * x + m[9] * y + m[10] * z))
 
 
 def mtrans(x=0, y=0, z=0):
@@ -186,6 +194,10 @@ def detail(k=None):
         return _STATE.get("detail", 1.0)
     _STATE["detail"] = float(k)
     return k
+
+
+def _np():
+    return globals().get("np")
 
 
 def _steps(n):
@@ -333,6 +345,17 @@ def superellipse(w, d, n=2, taper=0):
     if w == 0 and d == 0:
         return Profile([[(0, 0)]])
     sides = segments(max(w, d) / 2) if _STATE["facets"] is not None else max(8, _steps(48))
+    if _np() is not None and d:                           # the same construction, on arrays
+        np_ = _np()
+        t = np_.arange(257) * (2 * math.pi / 256)
+        c, s_ = np_.cos(t), np_.sin(t)
+        px = w / 2 * np_.copysign(np_.abs(c) ** (2 / n), c)
+        py = d / 2 * np_.copysign(np_.abs(s_) ** (2 / n), s_)
+        px[256], py[256] = px[0], py[0]
+        lengths_ = np_.concatenate(([0.0], np_.cumsum(np_.hypot(np_.diff(px), np_.diff(py)))))
+        target = lengths_[-1] * np_.arange(sides) / sides
+        u, v = np_.interp(target, lengths_, px), np_.interp(target, lengths_, py)
+        return Profile([list(zip((u * (1 - taper * 2 * v / d)).tolist(), v.tolist()))])
     dense = []
     for k in range(256):
         t = 2 * math.pi * k / 256
@@ -2459,7 +2482,22 @@ def _surface_parts(targets):
 
 
 def _scatter_best(n, candidate, position):
-    points, out = [], []
+    """n picks, each the best of 16 candidates by distance to those already picked."""
+    out = []
+    if np is not None:
+        chosen = np.empty((max(n, 1), 3))
+        for i in range(n):
+            options = [candidate() for _ in range(16)]
+            if i:
+                at = np.array([tuple(position(c)) for c in options])
+                gaps = ((at[:, None, :] - chosen[None, :i, :]) ** 2).sum(-1).min(1)
+                k = int(np.argmax(gaps))                         # the first of equals, as the original's max()
+            else:
+                k = 0
+            chosen[i] = tuple(position(options[k]))
+            out.append(options[k])
+        return out
+    points = []
     for i in range(n):
         best, best_d = None, -1.0
         for _ in range(16):
@@ -2556,12 +2594,16 @@ def snap(targets, points, direction=None):
     N = np.cross(B - A, C - A)
     N = N / np.maximum(np.linalg.norm(N, axis=1), 1e-300)[:, None]
     out = Frames()
+    centre = (A + B + C) / 3
+    reach = np.sqrt(np.maximum(((A - centre) ** 2).sum(1), np.maximum(((B - centre) ** 2).sum(1), ((C - centre) ** 2).sum(1))))
     for q in points:
         p = np.array(q.origin if isinstance(q, Frame) else q, dtype=float)
         if ray is None:
-            near = _closest_on_triangles(p[None, :], A, B, C)
-            k = int(np.argmin(((near - p) ** 2).sum(1)))
-            out.append(Frame(near[k], N[k]))
+            away = np.sqrt(((centre - p) ** 2).sum(1))
+            maybe = np.nonzero(away - reach <= (away + reach).min())[0]     # the rest are farther than one already in hand
+            near = _closest_on_triangles(p[None, :], A[maybe], B[maybe], C[maybe])
+            j = int(np.argmin(((near - p) ** 2).sum(1)))
+            out.append(Frame(near[j], N[maybe[j]]))
             continue
         e1, e2 = B - A, C - A
         h = np.cross(ray[None, :], e2)

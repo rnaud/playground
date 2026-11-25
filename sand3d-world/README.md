@@ -32,10 +32,17 @@ the ambient occlusion, bloom and anti-aliasing.
 Made by this page, not by Sand3D: the house shell, terrain, pond, grass, sky and the surface
 detail.
 
-The first visit builds for about 70 seconds on the machine it was made on (Apple M5 Pro),
-most of it one boulder; each program's result is then kept in IndexedDB, so later visits
-skip Python. The scene is about 7.3 M triangles and drew in 16 to 31 ms a frame there at
-1500 x 1125; it has not been measured on anything slower.
+A cold build takes about 15 seconds on the machine it was made on (Apple M5 Pro, with
+Pyodide already downloaded): 43 seconds of Python shared by four workers, 3 of meshing.
+Each program's result is then kept in IndexedDB, so later visits skip Python; `?fresh`
+ignores that cache. The scene is about 7.3 M triangles and draws in 7 to 18 ms a frame there
+at 1500 x 1125; it has not been measured on anything slower.
+
+What keeps it quick: the scene is drawn once and ambient occlusion reads that pass's depth;
+sun shadows are redrawn only when the walker moves 8 m on or something outdoors changes;
+trees and rocks are separate objects, so those out of view are skipped; the crosshair is
+tested against a box round each object, not its triangles; and from indoors only 40% of the
+grass is drawn.
 
 Jointed objects open with E: the cabinet, the chest of drawers, the dryer, the garden gate;
 the ceiling fan and the wind turbine spin.

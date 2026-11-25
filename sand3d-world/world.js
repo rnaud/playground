@@ -6,7 +6,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { TexturePass } from 'three/addons/postprocessing/TexturePass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
@@ -45,7 +45,7 @@ function rng(seed) {
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, QUALITY === 'low' ? 1 : 1.25));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.42;
 document.body.prepend(renderer.domElement);
@@ -82,15 +82,20 @@ Object.assign(sun.shadow.camera, { left: -46, right: 46, top: 46, bottom: -46, n
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.035;
 sun.shadow.radius = 2.5;
+sun.shadow.autoUpdate = false;                 // the land holds still: redrawn when the walker moves on or something outdoors changes
+let sunStale = true;
 scene.add(sun, sun.target);
 scene.add(new THREE.HemisphereLight('#cfe0ff', '#5d5a44', 0.12));
 
 // Ambient occlusion grounds things where they meet; bloom lets the sky, lamps and bright metal glow.
-const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: QUALITY === 'low' ? 0 : 4 }));
-composer.addPass(new RenderPass(scene, camera));
+// The scene is drawn once into its own target; ambient occlusion reads that target's depth, so
+// the land is not drawn a second time for it. Bloom lets the sky, lamps and bright metal glow.
+const sceneTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: QUALITY === 'low' ? 0 : 4, depthTexture: new THREE.DepthTexture(1, 1) });
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType }));
+composer.addPass(new TexturePass(sceneTarget.texture));
 let ao = null;
 if (QUALITY !== 'low') {
-  ao = new GTAOPass(scene, camera, 1, 1);
+  ao = new GTAOPass(scene, camera, 1, 1, { depthTexture: sceneTarget.depthTexture });
   ao.updateGtaoMaterial({ radius: 0.55, distanceExponent: 1.3, thickness: 1.2, scale: 1.15, samples: 12 });
   ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 12 });
   ao.blendIntensity = 1;
@@ -103,6 +108,8 @@ function resize() {
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
   composer.setPixelRatio(renderer.getPixelRatio());
+  sceneTarget.setSize(Math.round(innerWidth * renderer.getPixelRatio()), Math.round(innerHeight * renderer.getPixelRatio()));
+  if (ao) ao.setGBuffer(sceneTarget.depthTexture);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
 }
@@ -397,7 +404,15 @@ function template(built, item) {
 
 // ---------------------------------------------------------------- putting templates into the world
 const things = new Map();          // id → { item, tpl }
-const picks = [];                  // objects the crosshair can name
+const picks = [];                  // a plain box round each placed object: what the crosshair is tested against
+function proxy(item, holder, size, x, y, z, rotDegrees, s = 1) {
+  const box = new THREE.Mesh(new THREE.BoxGeometry(Math.max(size.x * s, 0.08), Math.max(size.y * s, 0.08), Math.max(size.z * s, 0.08)));
+  box.position.set(x, y + size.y * s / 2, z);
+  box.rotation.y = THREE.MathUtils.degToRad(rotDegrees);
+  box.updateMatrixWorld(true);
+  box.userData = { item, holder };
+  picks.push(box);
+}
 const lives = [];                  // objects that open
 const waiting = [];                // placements whose support is not built yet
 const placed = new Map();          // layout name → { x, y, z, rot, top }
@@ -440,7 +455,8 @@ function putOne(entry, spot) {
   }
   (item.indoors ? indoors : outdoors).add(holder);
   if (item.indoors) lampsStale = performance.now();
-  picks.push(holder);
+  sunStale = true;
+  proxy(item, holder, tpl.size, x, y, z, rot + (spot.on ? (placed.get(spot.on)?.rot || 0) : 0), spot.s || 1);
   triangleCount += tpl.triangles;
   instanceCount += 1;
   const s = spot.s || 1, f = footprint(tpl, rot);
@@ -482,22 +498,35 @@ function scatter(entry, rule) {
   }
   if (!spots.length) return;
   const dummy = new THREE.Object3D();
+  const place = (sp) => {
+    dummy.position.set(sp.x, rule.zone === 'pond' ? -0.42 : sp.y - 0.04, sp.z);
+    dummy.rotation.set(0, THREE.MathUtils.degToRad(sp.rot), 0);
+    dummy.scale.setScalar(sp.s);
+    dummy.updateMatrix();
+    return dummy.matrix;
+  };
   for (const p of tpl.parts) {
-    const mesh = new THREE.InstancedMesh(p.geometry, p.material, spots.length);
-    spots.forEach((s, i) => {
-      dummy.position.set(s.x, rule.zone === 'pond' ? -0.42 : s.y - 0.04, s.z);
-      dummy.rotation.set(0, THREE.MathUtils.degToRad(s.rot), 0);
-      dummy.scale.setScalar(s.s);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-    });
-    mesh.castShadow = rule.shadow !== false && !p.material.transparent;
-    mesh.receiveShadow = true;
-    mesh.userData.item = item;
-    mesh.computeBoundingSphere();
-    outdoors.add(mesh);
-    picks.push(mesh);
+    const shadow = rule.shadow !== false && !p.material.transparent;
+    if (spots.length <= 10) {                       // each its own object, so one out of view is not drawn
+      for (const sp of spots) {
+        const mesh = new THREE.Mesh(p.geometry, p.material);
+        mesh.matrixAutoUpdate = false;
+        mesh.matrix.copy(place(sp));
+        mesh.castShadow = shadow;
+        mesh.receiveShadow = true;
+        outdoors.add(mesh);
+      }
+    } else {
+      const mesh = new THREE.InstancedMesh(p.geometry, p.material, spots.length);
+      spots.forEach((sp, i) => mesh.setMatrixAt(i, place(sp)));
+      mesh.castShadow = shadow;
+      mesh.receiveShadow = true;
+      mesh.computeBoundingSphere();
+      outdoors.add(mesh);
+    }
   }
+  for (const sp of spots) proxy(item, null, tpl.size, sp.x, sp.y, sp.z, sp.rot, sp.s);
+  sunStale = true;
   triangleCount += tpl.triangles * spots.length;
   instanceCount += spots.length;
   if (rule.trunk) for (const s of spots) colliders.push({ x: s.x, z: s.z, r: rule.trunk * s.s });
@@ -527,7 +556,8 @@ const cacheGet = (db, key) => new Promise((resolve) => {
 });
 const cachePut = (db, key, value) => { try { db?.transaction('scenes', 'readwrite').objectStore('scenes').put(value, key); } catch { /* a full cache only costs time */ } };
 
-const stats = { total: 0, done: 0, failed: [], python: 0, fromCache: 0, started: performance.now() };
+const stats = { total: 0, done: 0, failed: [], python: 0, fromCache: 0, started: performance.now(), times: {} };
+const FRESH = new URLSearchParams(location.search).has('fresh');      // ?fresh rebuilds everything, ignoring the cache
 
 async function buildAll() {
   const manifest = await (await fetch('data/world.json')).json();
@@ -538,29 +568,32 @@ async function buildAll() {
   credits(items);
   const [db] = await Promise.all([openCache(), loadCsg()]);
   const land = (item, json, ms, cached) => {
+    const landed = performance.now();
     try {
       const built = build(JSON.parse(json), { soften: item.source === 'Sand3D Nature' ? 0 : 0.0035 });
       arrive(item, template(built, item));
       stats.python += ms;
+      stats.times[item.id] = Math.round(ms);
       if (cached) stats.fromCache += 1;
     } catch (error) {
       stats.failed.push({ id: item.id, error: String(error.message || error) });
       console.warn('could not build', item.id, error);
     }
+    stats.meshing = (stats.meshing || 0) + performance.now() - landed;
     stats.done += 1;
     progress(item);
   };
   const keyOf = (item) => `${CACHE_VERSION}:${item.lod || 1}:${item.key}`;
   const missing = [];
   for (const item of items) {
-    const hit = await cacheGet(db, keyOf(item));
+    const hit = FRESH ? null : await cacheGet(db, keyOf(item));
     if (hit) { land(item, hit, 0, true); await new Promise((r) => setTimeout(r)); } else missing.push(item);
   }
   if (!missing.length) return;
   // A few workers share the queue, light objects first so the house fills quickly.
   const queue = [...missing].sort((p, q) => (p.lod ? 1 : 0) - (q.lod ? 1 : 0));
   const byId = new Map(missing.map((item) => [item.id, item]));
-  const workers = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2, queue.length));
+  const workers = Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2, queue.length));      // (six was three times slower in all: they starve each other)
   for (let w = 0; w < workers; w++) {
     const worker = new Worker('worker.js');
     const next = () => { const item = queue.shift(); if (item) worker.postMessage({ id: item.id, program: item.program, entry: item.entry, lod: item.lod || 1 }); else worker.terminate(); };
@@ -661,9 +694,8 @@ function lookAt(now) {
   if (now - lastLook < 180) return;
   lastLook = now;
   ray.setFromCamera(new THREE.Vector2(0, 0), camera);
-  const hit = ray.intersectObjects(picks, true)[0];
-  let item = null, holder = null;
-  for (let o = hit?.object; o && !item; o = o.parent) { item = o.userData.item || null; holder = o; }
+  const hit = ray.intersectObjects(picks, false)[0];
+  const item = hit ? hit.object.userData.item : null, holder = hit ? hit.object.userData.holder : null;
   seen = item ? { item, holder } : null;
   const live = seen && lives.find((l) => l.holder === holder);
   $('name').textContent = item ? item.title : '';
@@ -686,6 +718,7 @@ function animate(dt, now) {
       j.value = (Math.abs(j.hi) >= Math.abs(j.lo) ? j.hi : j.lo) * ease;
     }
     l.pose();
+    if (!l.item.indoors) sunStale = true;
     if (l.item.indoors) redrawLampShadows([lamps.reduce((a, b) => (a.position.distanceToSquared(l.holder.position) < b.position.distanceToSquared(l.holder.position) ? a : b))]);
   }
 }
@@ -701,8 +734,6 @@ buildAll().catch((error) => { $('building').textContent = `Could not start: ${er
 // and the trees have no business in that.
 const tiny = new THREE.WebGLRenderTarget(4, 4);
 function redrawLampShadows(which = lamps) {
-  const sunAuto = sun.shadow.autoUpdate;
-  sun.shadow.autoUpdate = false;
   outdoors.visible = false;
   sky.visible = false;
   for (const lamp of which) lamp.shadow.needsUpdate = true;
@@ -711,10 +742,21 @@ function redrawLampShadows(which = lamps) {
   renderer.setRenderTarget(null);
   outdoors.visible = true;
   sky.visible = true;
-  sun.shadow.autoUpdate = sunAuto;
+}
+function followSun() {
+  const x = Math.round(me.x / 8) * 8, z = Math.round(me.z / 8) * 8;
+  if (x === sun.target.position.x && z === sun.target.position.z && sun.position.y > 1) return;
+  sun.target.position.set(x, 0, z);
+  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 110);
+  sun.target.updateMatrixWorld();
+  sunStale = true;
 }
 const draw = () => {
   if (lampsStale && performance.now() - lampsStale > 400) { lampsStale = 0; redrawLampShadows(); }
+  if (sunStale) { sunStale = false; sun.shadow.needsUpdate = true; }
+  renderer.setRenderTarget(sceneTarget);
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
   composer.render();
 };
 let last = performance.now();
@@ -726,9 +768,8 @@ function frame(now) {
   animate(dt, now);
   lookAt(now);
   if (ripple) ripple.offset.set(now * 0.000012, now * 0.000007);
-  grass.update(camera.position, now / 1000);
-  sun.target.position.set(Math.round(me.x / 4) * 4, 0, Math.round(me.z / 4) * 4);
-  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 110);
+  grass.update(camera.position, now / 1000, inHouse(me.x, me.z) ? 0.4 : 1);
+  followSun();
   draw();
 }
 requestAnimationFrame(frame);
@@ -740,9 +781,8 @@ window.stand = (x, z, yawDegrees = 0, pitch = -0.1) => {
   camera.updateMatrixWorld(true);
   lastLook = 0;
   lookAt(performance.now());
-  grass.update(camera.position, performance.now() / 1000);
-  sun.target.position.set(Math.round(me.x / 4) * 4, 0, Math.round(me.z / 4) * 4);
-  sun.position.copy(sun.target.position).addScaledVector(SUN_DIR, 110);
+  grass.update(camera.position, performance.now() / 1000, inHouse(me.x, me.z) ? 0.4 : 1);
+  followSun();
   sun.target.updateMatrixWorld();
   draw();
   return `${$('name').textContent} | ${$('about').textContent}`;

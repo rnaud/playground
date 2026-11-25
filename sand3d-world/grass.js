@@ -2,7 +2,7 @@
 // far side as it falls behind, so the lawn never ends. Made here, not from the dataset.
 import * as THREE from 'three';
 
-const PATCH = 56, TUFTS = 110000, BLADES = 5, BURIED = 100;
+const PATCH = 48, TUFTS = 80000, BLADES = 5, BURIED = 100;
 
 export function makeGrass({ pond, house }) {
   // One tuft: a few tapering blades leaning outward.
@@ -77,7 +77,8 @@ export function makeGrass({ pond, house }) {
   mesh.receiveShadow = true;
   return {
     mesh,
-    update(eye, seconds) { uniforms.uCam.value.copy(eye); uniforms.uTime.value = seconds; },
+    // `share` of the tufts to draw: fewer when the walker is indoors and sees the lawn only through windows.
+    update(eye, seconds, share = 1) { uniforms.uCam.value.copy(eye); uniforms.uTime.value = seconds; geometry.instanceCount = Math.round(TUFTS * share); },
     triangles: TUFTS * BLADES * 3,
   };
 }
