@@ -23,8 +23,9 @@ browser and meshed live. No 3D model files are shipped.
 - `grass.js` is the lawn: one patch of blades that follows the walker.
 - `layout.js` is the floor plan and the scatter rules.
 
-Lighting is a physical sky that also lights every surface, a sun with soft shadows, ambient
-occlusion and a light bloom; rooms reflect a neutral room, not the sky. Each room's ceiling
+Lighting is a sun with soft shadows, a physical sky that fills the shade (about a fifth as
+strong as the sun, so shadows read), ambient occlusion and a light bloom; rooms reflect a
+neutral room, not the sky, and the outside walls are lined indoors so they do the same. Each room's ceiling
 lamp casts shadows, redrawn only when something indoors changes. Household parts get their
 extruded edges eased by 3.5 mm, a finish the programs do not ask for. `?quality=low` drops
 the ambient occlusion, bloom and anti-aliasing.

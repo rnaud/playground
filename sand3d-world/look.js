@@ -168,7 +168,7 @@ export function lookMaterial(key) {
   const [surface, rough, metal, coat, glass, two, where, unit] = key.split('|');
   const m = new THREE.MeshPhysicalMaterial({
     vertexColors: true, roughness: Math.max(0.05, Number(rough) / 10), metalness: metal === 'm' ? 1 : 0,
-    clearcoat: coat ? 0.6 : 0, clearcoatRoughness: 0.2, envMapIntensity: where === 'i' ? (metal === 'm' ? 1.3 : 0.3) : 1, envMap: where === 'i' ? room : null,
+    clearcoat: coat ? 0.6 : 0, clearcoatRoughness: 0.2, envMapIntensity: where === 'i' ? (metal === 'm' ? 1.3 : 0.65) : 1, envMap: where === 'i' ? room : null,
     side: two || glass ? THREE.DoubleSide : THREE.FrontSide,
   });
   if (glass) Object.assign(m, { transparent: true, opacity: 0.28, roughness: 0.03, depthWrite: false, envMapIntensity: where === 'i' ? 0.6 : 1.6 });

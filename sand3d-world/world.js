@@ -71,11 +71,11 @@ sky.userData.backdrop = true;
   copy.material.uniforms.sunPosition.value.copy(SUN_DIR);
   only.add(copy);
   scene.environment = pmrem.fromScene(only, 0.02).texture;
-  scene.environmentIntensity = 0.75;
+  scene.environmentIntensity = 0.22;      // the sky fills the shade; the sun below does the lighting (the other way round, nothing showed a shadow)
   setIndoorLight(pmrem.fromScene(new RoomEnvironment(), 0.04).texture);     // rooms reflect a room, not the sky
 }
 scene.fog = new THREE.FogExp2('#9fb6c6', 0.0022);
-const sun = new THREE.DirectionalLight('#fff0d8', 3.3);
+const sun = new THREE.DirectionalLight('#fff0d8', 15);
 sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
 Object.assign(sun.shadow.camera, { left: -46, right: 46, top: 46, bottom: -46, near: 1, far: 220 });
@@ -177,13 +177,13 @@ let ripple = null;
 function makeHouse() {
   const { x0, x1, z0, z1, wall: H, thick: T, floor } = HOUSE;
   const house = new THREE.Group();
-  const indoor = { envMap: indoorLight(), envMapIntensity: 0.3 };
+  const indoor = { envMap: indoorLight(), envMapIntensity: 0.65 };
   const plaster = plain('#d9d0be', 'plaster', { roughness: 0.92 });
   const inner = plain('#efe9df', 'plaster', { roughness: 0.94, ...indoor });
   const glass = new THREE.MeshPhysicalMaterial({ color: '#dfeef2', roughness: 0.02, transparent: true, opacity: 0.16, envMapIntensity: 1.8, depthWrite: false });
   const trim = plain('#f4f1ea', 'smooth', { roughness: 0.55 });
   const timber = plain('#6a4a32', 'wood', { roughness: 0.6 });
-  const doorPaint = plain('#f2efe8', 'smooth', { roughness: 0.45, envMap: indoorLight(), envMapIntensity: 0.3 });
+  const doorPaint = plain('#f2efe8', 'smooth', { roughness: 0.45, ...indoor });
   const brass = new THREE.MeshStandardMaterial({ color: '#b8935a', metalness: 1, roughness: 0.3, envMap: indoorLight(), envMapIntensity: 0.6 });
   const box = (w, h, d, x, y, z, m, solid = true) => {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
@@ -195,12 +195,17 @@ function makeHouse() {
     return mesh;
   };
   // A wall along x (at z = at) or along z (at x = at), from a to b, with door and window openings,
-  // each opening dressed with a frame, and windows with a sill and glazing bars.
-  const wallRun = (axis, at, a, b, openings, m) => {
+  // each opening dressed with a frame, and windows with a sill and glazing bars. An outside wall
+  // says which side its room is on (`room`: 1 or -1) and is lined there with the indoor plaster,
+  // so that its inner face is lit by the room like the partitions, not by the sky.
+  const wallRun = (axis, at, a, b, openings, m, room = 0) => {
     const piece = (from, to, y0, y1, mat = m, solid = true, deep = T, lift = 0) => {
       if (to - from < 1e-3 || y1 - y0 < 1e-3) return;
       const len = to - from, mid = (from + to) / 2;
       if (axis === 'x') box(len, y1 - y0, deep, mid, y0, at + lift, mat, solid); else box(deep, y1 - y0, len, at + lift, y0, mid, mat, solid);
+      if (!room || mat !== m) return;
+      const skin = 0.008, off = at + room * (T + skin) / 2;
+      if (axis === 'x') box(len, y1 - y0, skin, mid, y0, off, inner, false); else box(skin, y1 - y0, len, off, y0, mid, inner, false);
     };
     let cursor = a;
     for (const o of [...openings].sort((p, q) => p.a - q.a)) {
@@ -241,10 +246,10 @@ function makeHouse() {
     piece(cursor, b, 0, H);
   };
   const D = (a, b, swing = 0) => ({ a, b, kind: 'door', swing }), W = (a, b) => ({ a, b, kind: 'window' });
-  wallRun('x', z0, x0, x1, [W(-5.4, -3.6), D(-1.7, -0.7), W(2.4, 4.6)], plaster);
-  wallRun('x', z1, x0, x1, [W(-5, -3), W(0.2, 1.3), D(4.2, 5.3)], plaster);
-  wallRun('z', x0, z0, z1, [W(-3.2, -1.2), W(2.2, 3.8)], plaster);
-  wallRun('z', x1, z0, z1, [W(-3.4, -1.4), W(2.4, 3.8)], plaster);
+  wallRun('x', z0, x0, x1, [W(-5.4, -3.6), D(-1.7, -0.7), W(2.4, 4.6)], plaster, 1);
+  wallRun('x', z1, x0, x1, [W(-5, -3), W(0.2, 1.3), D(4.2, 5.3)], plaster, -1);
+  wallRun('z', x0, z0, z1, [W(-3.2, -1.2), W(2.2, 3.8)], plaster, 1);
+  wallRun('z', x1, z0, z1, [W(-3.4, -1.4), W(2.4, 3.8)], plaster, -1);
   wallRun('z', 0, z0, 1, [D(-2.9, -1.1)], inner);
   wallRun('x', 1, x0, x1, [D(-4.7, -3.7, -100), D(4.3, 5.4, 100)], inner);
   wallRun('z', -1, 1, z1, [], inner);

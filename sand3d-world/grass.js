@@ -68,7 +68,7 @@ export function makeGrass({ pond, house }) {
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vBlade;')
       .replace('#include <color_fragment>', `#include <color_fragment>
-        vec3 low = mix(vec3(0.02, 0.06, 0.012), vec3(0.035, 0.07, 0.015), vBlade.y);
+        vec3 low = mix(vec3(0.04, 0.10, 0.022), vec3(0.055, 0.11, 0.026), vBlade.y);      // (darker roots read as black specks from afar)
         vec3 high = mix(vec3(0.10, 0.21, 0.04), vec3(0.20, 0.25, 0.07), fract(vBlade.y * 3.7));
         diffuseColor.rgb = mix(low, high, vBlade.x);`);
   };
